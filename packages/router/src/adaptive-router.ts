@@ -31,6 +31,20 @@ export const DEFAULT_ROUTER_MODE: RouterMode = "shadow";
  */
 const MAX_TRACKED_DECISIONS = 10_000;
 export const DEFAULT_COLD_START_PULLS = 25;
+/**
+ * Mean quality-signal confidence a task type must show before the bandit is allowed to steer it.
+ *
+ * 0.5 sits deliberately between the heuristic floor (~0.2) and a real scorer (judge ~0.6,
+ * deterministic ~0.9). A task type graded only by "the call did not error" therefore stays on the
+ * static rules, because on such traffic the reward's quality term is a constant and the bandit is
+ * effectively guessing.
+ *
+ * Simulation is the reason this exists: the bandit beat the rules on validator-covered tasks
+ * (56.4% vs 45.3% optimal picks) and lost on the rest by more than the covered win was worth.
+ */
+export const DEFAULT_MIN_QUALITY_CONFIDENCE = 0.5;
+/** Observations of a task type needed before its mean confidence is trusted enough to gate on. */
+export const DEFAULT_MIN_CONFIDENCE_SAMPLES = 10;
 export const DEFAULT_STATE_KEY = "router:v1";
 
 export interface AdaptiveRouterConfig {
@@ -40,6 +54,12 @@ export interface AdaptiveRouterConfig {
   mode?: RouterMode;
   /** Observations of an arm *for a task type* before the bandit is trusted over the baseline. */
   coldStartPulls?: number;
+  /**
+   * Minimum mean quality-signal confidence for a task type before the bandit may steer it.
+   * Set to 0 to disable gating entirely and let the bandit route everything.
+   */
+  minQualityConfidence?: number;
+  minConfidenceSamples?: number;
   policies?: TenantPolicies;
   chainLength?: number;
   stateStore?: StateStore;
@@ -69,6 +89,8 @@ export class AdaptiveRouter implements Router {
   private readonly baseline: StaticRouter;
   private readonly mode: RouterMode;
   private readonly coldStartPulls: number;
+  private readonly minQualityConfidence: number;
+  private readonly minConfidenceSamples: number;
   private readonly policies: TenantPolicies;
   private readonly chainLength: number;
   private readonly stateStore: StateStore | undefined;
@@ -81,6 +103,15 @@ export class AdaptiveRouter implements Router {
   private contextPulls = new Map<string, number>();
   /** Observations per task type. This is what the cold-start gate actually reads. */
   private taskPulls = new Map<TaskType, number>();
+  /**
+   * Running mean of quality-signal confidence per task type.
+   *
+   * Deliberately learned rather than configured. A hard-coded list of "task types we can grade"
+   * would couple the router to whichever validators happen to exist and go stale the moment one is
+   * added or removed. This way, adding a validator makes the router start trusting the bandit on
+   * that task on its own.
+   */
+  private taskConfidence = new Map<TaskType, { sum: number; count: number }>();
   private observationsSincePersist = 0;
 
   /** Decision context retained until the outcome arrives, so reward reaches the right arm. */
@@ -103,6 +134,8 @@ export class AdaptiveRouter implements Router {
     this.baseline = config.baseline;
     this.mode = config.mode ?? DEFAULT_ROUTER_MODE;
     this.coldStartPulls = config.coldStartPulls ?? DEFAULT_COLD_START_PULLS;
+    this.minQualityConfidence = config.minQualityConfidence ?? DEFAULT_MIN_QUALITY_CONFIDENCE;
+    this.minConfidenceSamples = config.minConfidenceSamples ?? DEFAULT_MIN_CONFIDENCE_SAMPLES;
     this.policies = config.policies ?? {};
     this.chainLength = config.chainLength ?? DEFAULT_CHAIN_LENGTH;
     this.stateStore = config.stateStore;
@@ -156,6 +189,23 @@ export class AdaptiveRouter implements Router {
       };
     }
 
+    // Quality-observability gate: only steer task types where the reward's quality term actually
+    // carries information.
+    //
+    // On traffic graded solely by "the call did not error", quality is a constant, so the bandit is
+    // ranking on cost and latency alone — which the static rules already encode, and it pays a real
+    // exploration cost to rediscover. Measurement bore this out: the bandit beat the rules on
+    // validator-covered tasks and lost by more than that on the rest.
+    const confidence = this.qualityConfidenceFor(taskType);
+    if (confidence !== undefined && confidence < this.minQualityConfidence) {
+      this.remember(baselineDecision.decisionId, baselineDecision.modelId, features, taskType);
+      return {
+        ...baselineDecision,
+        shadowModelId: choice.armId,
+        reason: `${baselineDecision.reason} (bandit gated: mean quality confidence ${confidence.toFixed(2)} on '${taskType}' is below ${this.minQualityConfidence})`,
+      };
+    }
+
     const primary = candidates.find((spec) => spec.modelId === choice.armId) as ModelSpec;
     const decisionId = this.ids.generate("dec");
     this.remember(decisionId, primary.modelId, features, taskType);
@@ -192,6 +242,14 @@ export class AdaptiveRouter implements Router {
       const key = contextKey(modelId, taskType);
       this.contextPulls.set(key, (this.contextPulls.get(key) ?? 0) + 1);
       this.taskPulls.set(taskType, (this.taskPulls.get(taskType) ?? 0) + 1);
+
+      if (outcome.qualityConfidence !== undefined) {
+        const existing = this.taskConfidence.get(taskType) ?? { sum: 0, count: 0 };
+        this.taskConfidence.set(taskType, {
+          sum: existing.sum + outcome.qualityConfidence,
+          count: existing.count + 1,
+        });
+      }
     }
 
     // Retained so a late-arriving quality signal can correct exactly this reward. Without the
@@ -258,6 +316,27 @@ export class AdaptiveRouter implements Router {
     return this.taskPulls.get(taskType) ?? 0;
   }
 
+  /**
+   * Mean quality-signal confidence seen for a task type.
+   *
+   * `undefined` means "not enough evidence to judge", which is treated as passing rather than
+   * failing: a caller that reports no confidence at all should get the pre-gating behaviour, not
+   * silently lose adaptive routing everywhere.
+   */
+  qualityConfidenceFor(taskType: TaskType): number | undefined {
+    const stats = this.taskConfidence.get(taskType);
+    if (!stats || stats.count < this.minConfidenceSamples) return undefined;
+    return stats.sum / stats.count;
+  }
+
+  /** Task types the bandit is currently permitted to steer. Useful for dashboards and debugging. */
+  steeredTaskTypes(): TaskType[] {
+    return [...this.taskConfidence.keys()].filter((taskType) => {
+      const confidence = this.qualityConfidenceFor(taskType);
+      return confidence === undefined || confidence >= this.minQualityConfidence;
+    });
+  }
+
   /** Flush learning to the store. Call on shutdown so the last window is not lost. */
   persist(): void {
     if (!this.stateStore) return;
@@ -265,6 +344,7 @@ export class AdaptiveRouter implements Router {
       bandit: this.bandit.snapshot(),
       contextPulls: Object.fromEntries(this.contextPulls),
       taskPulls: Object.fromEntries(this.taskPulls),
+      taskConfidence: Object.fromEntries(this.taskConfidence),
     };
     this.stateStore.save(this.stateKey, state);
     this.observationsSincePersist = 0;
@@ -278,6 +358,9 @@ export class AdaptiveRouter implements Router {
     if (this.bandit.restore(stored.bandit)) {
       this.contextPulls = new Map(Object.entries(stored.contextPulls ?? {}));
       this.taskPulls = new Map(Object.entries(stored.taskPulls ?? {}) as [TaskType, number][]);
+      this.taskConfidence = new Map(
+        Object.entries(stored.taskConfidence ?? {}) as [TaskType, { sum: number; count: number }][],
+      );
     }
   }
 

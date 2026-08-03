@@ -222,6 +222,9 @@ async function settle(
       features: event.features,
       taskType: event.taskType,
       reward,
+      // Lets the router notice task types that only ever get the heuristic floor, and stop steering
+      // them. Omitting this would leave it unable to tell an informative reward from a constant.
+      qualityConfidence: provenance?.confidence,
     });
   }
 }

@@ -34,6 +34,14 @@ export interface RoutingOutcome {
   reward: number;
   /** Carried explicitly so the router's cold-start gate stays per-task without re-deriving it. */
   taskType?: TaskType;
+  /**
+   * 0..1 — how much authority the scorer behind `reward` claimed.
+   *
+   * This is what lets the router notice that a task type is only ever graded by "the call did not
+   * error", and decline to steer it. Omitting it leaves the router unable to tell an informative
+   * reward from an uninformative one, so it will assume the signal is usable.
+   */
+  qualityConfidence?: number;
   /** Links back to the decision this outcome settles, when the caller still has it. */
   decisionId?: string;
 }

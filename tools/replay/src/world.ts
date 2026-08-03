@@ -119,7 +119,7 @@ export interface SimulatedCall {
   /** The model's true quality on this draw, which the router does not get to see directly. */
   latentQuality: number;
   /** What a scorer was actually able to measure, and how confident it was. */
-  observed: { quality: number; source: string };
+  observed: { quality: number; source: string; confidence: number };
 }
 
 /**
@@ -187,18 +187,23 @@ export function simulateCall(inputs: SimulationInputs): SimulatedCall {
 
   let observedQuality: number;
   let source: string;
+  // Mirrors the CONFIDENCE bands in packages/quality: deterministic 0.9, heuristic 0.2.
+  let confidence: number;
 
   if (failed) {
     observedQuality = 0;
     source = "finish-reason";
+    confidence = 0.9; // "it errored" is a definitive observation
   } else if (covered) {
     // Validators are binary in practice — the JSON parses or it does not, the code balances or it
     // does not — so a latent quality of 0.9 shows up as a 90% chance of scoring 1.
     observedQuality = inputs.random() < latentQuality ? 1 : 0;
     source = inputs.taskType === "code" ? "code-structure" : "json-schema";
+    confidence = 0.9;
   } else {
     observedQuality = HEURISTIC_SUCCESS_QUALITY;
     source = "finish-reason";
+    confidence = 0.2;
   }
 
   const quality = observedQuality;
@@ -229,7 +234,7 @@ export function simulateCall(inputs: SimulationInputs): SimulatedCall {
     event,
     reward: computeReward(event, { quality }),
     latentQuality,
-    observed: { quality, source },
+    observed: { quality, source, confidence },
   };
 }
 

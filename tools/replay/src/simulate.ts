@@ -115,8 +115,9 @@ function makeScenario(random: () => number): Scenario {
   };
 }
 
-function adaptiveRouter(seed: number): AdaptiveRouter {
+function adaptiveRouter(seed: number, minQualityConfidence = 0): AdaptiveRouter {
   return new AdaptiveRouter({
+    minQualityConfidence,
     bandit: new LinUcbBandit({
       dimension: FEATURE_DIMENSION,
       alpha: ALPHA,
@@ -165,6 +166,12 @@ function buildRuns(): ArmRun[] {
       ...empty(),
     },
     {
+      name: "LinUCB (validated + gated)",
+      router: adaptiveRouter(99, 0.5),
+      observability: "validated",
+      ...empty(),
+    },
+    {
       name: "Thompson (validated)",
       router: new AdaptiveRouter({
         bandit: new ThompsonBandit({ random: seededRandom(123) }),
@@ -204,7 +211,7 @@ function run(): { runs: ArmRun[]; oracleReward: number } {
 
       // Common random numbers: every arm faces the identical noise draw, so a difference in outcome
       // is a difference in judgement rather than in luck.
-      const { event, reward } = simulateCall({
+      const { event, reward, observed } = simulateCall({
         spec,
         taskType: scenario.taskType,
         routeMode: scenario.routeMode,
@@ -221,6 +228,7 @@ function run(): { runs: ArmRun[]; oracleReward: number } {
         features: decision.features,
         taskType: scenario.taskType,
         reward,
+        qualityConfidence: observed.confidence,
       });
 
       armRun.observedReward += reward;
@@ -367,6 +375,7 @@ const { runs, oracleReward } = run();
 const baseline = runs[0] as ArmRun;
 const heuristicOnly = runs[1] as ArmRun;
 const validated = runs[2] as ArmRun;
+const gated = runs[3] as ArmRun;
 const gap = oracleReward - baseline.trueValue;
 
 const outputPath = resolve(dirname(fileURLToPath(import.meta.url)), "../out/simulation.md");
@@ -407,18 +416,22 @@ console.log(
 
 if (validated.trueValue <= baseline.trueValue) {
   console.log(
-    `\nNOTE: the bandit still trails static on TOTAL value. The static rules sit within ${((gap / oracleReward) * 100).toFixed(2)}% of optimal here, and the bandit's mistakes on tasks no validator can grade cost more than that headroom is worth. This is the finding, not a bug — and it is the argument for routing adaptively only where quality is observable.`,
+    `\nNOTE: the UNGATED bandit trails static on total value (${validated.trueValue.toFixed(1)} vs ${baseline.trueValue.toFixed(1)}). The static rules sit within ${((gap / oracleReward) * 100).toFixed(2)}% of optimal, and the bandit's mistakes on tasks no validator can grade cost more than that headroom is worth. Gating is the answer to this, not a workaround.`,
   );
 }
 
 /*
  * CI exit criteria.
  *
- * These assert what the measurement actually supports, not what would be flattering. The bandit does
- * NOT beat static on total value in this world, so asserting that would either fail forever or invite
- * quietly reshaping the world until it passed. What the evidence does support is narrower and more
- * useful: where quality is observable, the bandit routes better than the rules, and observable
- * quality beats the heuristic it replaced.
+ * These assert what the measurement supports. The UNGATED bandit does not beat static on total
+ * value in this world, and asserting that it does would either fail forever or invite quietly
+ * reshaping the world until it passed. What the evidence supports is sharper:
+ *
+ *   1. Where quality is observable, the bandit routes better than the rules.
+ *   2. Observable quality beats the heuristic it replaced.
+ *   3. Gated to observable tasks, the bandit beats the rules OVERALL — on value and on regret.
+ *
+ * (3) is the product claim. If it breaks, adaptive routing is not earning its place.
  */
 if (validatedCovered <= staticCovered) {
   console.error(
@@ -435,7 +448,24 @@ if (validatedCovered <= heuristicCovered) {
   );
   process.exit(1);
 }
+if (gated.trueValue <= baseline.trueValue) {
+  console.error(
+    `\nFAIL: the gated router (${gated.trueValue.toFixed(1)}) did not beat static (${baseline.trueValue.toFixed(1)}) on total value.\n` +
+      "Routing adaptively only where quality is observable is the product claim; without it there is\n" +
+      "no measured reason to run a bandit at all.",
+  );
+  process.exit(1);
+}
+if (gated.totalRegret >= baseline.totalRegret) {
+  console.error("\nFAIL: gated router regret is not below the static baseline.");
+  process.exit(1);
+}
 
 console.log(
-  "\nPASS: on validator-covered tasks the bandit beats static, and validators beat the heuristic.",
+  `\nGating: ${gated.trueValue.toFixed(1)} vs static ${baseline.trueValue.toFixed(1)} true value, ` +
+    `regret ${gated.totalRegret.toFixed(1)} vs ${baseline.totalRegret.toFixed(1)}, ` +
+    `${(((gated.trueValue - baseline.trueValue) / gap) * 100).toFixed(1)}% of the oracle gap closed.`,
+);
+console.log(
+  "\nPASS: validators beat the heuristic, and gated adaptive routing beats the static baseline.",
 );

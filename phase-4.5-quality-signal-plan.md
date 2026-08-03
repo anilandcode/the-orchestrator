@@ -244,6 +244,29 @@ deliberately sub-optimal arm — more than twice the 2.10% headroom the whole ex
 now defaults to 0; LinUCB's uncertainty term explores in proportion to what it does not know, which a
 flat random floor does not. **Any exploration budget must be sized against the headroom it chases.**
 
+### Follow-up: task-type gating (implemented)
+
+Acting on finding (2): the router now steers **only task types where the quality signal carries
+information**, and leaves the rest on static rules.
+
+The gate is *learned, not configured*. The router tracks a running mean of the `qualityConfidence`
+already flowing through `observe()`, per task type, and declines to steer any task whose mean sits
+below 0.5 — between the heuristic floor (0.2) and a real scorer (judge 0.6, deterministic 0.9). A
+hard-coded list of "gradeable tasks" would couple the router to whichever validators happen to exist
+and rot the moment one is added; this way, adding a validator makes the router start trusting the
+bandit on that task by itself.
+
+| Strategy | Optimal picks (all) | Optimal (covered) | True value | Regret |
+|---|---:|---:|---:|---:|
+| static baseline | 37.1% | 45.3% | 6747.0 | 144.6 |
+| LinUCB, validated, **ungated** | 37.3% | 56.4% | 6615.8 | 275.8 |
+| LinUCB, validated, **gated** | **41.5%** | 55.7% | **6778.6** | **113.0** |
+| *oracle* | 100% | 100% | 6891.6 | 0 |
+
+**The gated router beats the static baseline on total value for the first time** — 21.9% of the
+oracle gap closed, with regret 22% below static, while keeping nearly all the covered-task advantage.
+CI now asserts this, because the evidence supports it.
+
 ### What this changes
 
 - `ROUTER_MODE=shadow` remains the right default, now on evidence rather than caution.

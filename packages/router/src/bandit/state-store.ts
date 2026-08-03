@@ -20,6 +20,8 @@ export interface RouterState {
   contextPulls: Record<string, number>;
   /** Observations per task type. This is what the cold-start gate reads. */
   taskPulls?: Record<string, number>;
+  /** Running quality-confidence mean per task type, for the observability gate. */
+  taskConfidence?: Record<string, { sum: number; count: number }>;
 }
 
 export const BANDIT_MIGRATIONS: Migration[] = [
