@@ -4,6 +4,7 @@ import {
   OpenAIAdapter,
   type ProviderAdapter,
 } from "@orchestrator/gateway";
+import { SqliteToolAuditLog, ToolRegistry } from "@orchestrator/mcp";
 import {
   HashingEmbedder,
   MemoryService,
@@ -59,6 +60,8 @@ export interface Container {
   quality: QualityPipeline;
   runs: SqliteRunStore;
   memory: MemoryService;
+  tools: ToolRegistry;
+  toolAudit: SqliteToolAuditLog;
   /** Assigned after construction: the model executor needs the settle callback the server owns. */
   runner: GraphRunner | undefined;
   attachRunner(runner: GraphRunner): void;
@@ -134,6 +137,11 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
       ? new OpenAiEmbedder({ apiKey: config.openaiApiKey, model: config.embeddingModel })
       : new HashingEmbedder();
 
+  // Deny by default: a tenant reaches no tool until a policy grants it. MCP servers are registered
+  // at runtime via /v1/tools/servers rather than baked in here.
+  const toolAudit = new SqliteToolAuditLog(db);
+  const tools = new ToolRegistry({ audit: toolAudit, policies: config.toolPolicies });
+
   const memory = new MemoryService({
     store: new SqliteMemoryStore(db),
     embedder,
@@ -153,6 +161,8 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     quality,
     runs,
     memory,
+    tools,
+    toolAudit,
     get runner() {
       return runner;
     },

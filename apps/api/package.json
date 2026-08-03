@@ -6,6 +6,7 @@
   "main": "./dist/index.js",
   "dependencies": {
     "@orchestrator/gateway": "workspace:*",
+    "@orchestrator/mcp": "workspace:*",
     "@orchestrator/memory": "workspace:*",
     "@orchestrator/orchestrator": "workspace:*",
     "@orchestrator/quality": "workspace:*",

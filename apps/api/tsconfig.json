@@ -9,6 +9,7 @@
   "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/gateway" },
+    { "path": "../../packages/mcp" },
     { "path": "../../packages/memory" },
     { "path": "../../packages/orchestrator" },
     { "path": "../../packages/quality" },

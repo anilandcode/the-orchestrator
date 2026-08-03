@@ -21,6 +21,7 @@ export default defineConfig({
       "@orchestrator/router": pkg("router"),
       "@orchestrator/orchestrator": pkg("orchestrator"),
       "@orchestrator/memory": pkg("memory"),
+      "@orchestrator/mcp": pkg("mcp"),
     },
   },
   test: {

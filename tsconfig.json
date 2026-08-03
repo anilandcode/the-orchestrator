@@ -8,6 +8,7 @@
     { "path": "./packages/quality" },
     { "path": "./packages/orchestrator" },
     { "path": "./packages/memory" },
+    { "path": "./packages/mcp" },
     { "path": "./apps/api" },
     { "path": "./tools/replay" },
     { "path": "./tools/smoke" }

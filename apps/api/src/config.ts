@@ -19,6 +19,8 @@ export interface ApiConfig {
   memoryTtlMs: number | null;
   /** Uses the offline hashing embedder unless a real embedding model is configured. */
   embeddingModel: string | undefined;
+  /** Per-tenant tool allow/deny. Absent means the tenant gets no tools at all. */
+  toolPolicies: Record<string, { allow: string[]; deny?: string[] }>;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -40,6 +42,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     judgeMaxUsdPerHour: Number(env.QUALITY_JUDGE_MAX_USD_PER_HOUR ?? 1),
     memoryTtlMs: env.MEMORY_TTL_MS ? Number(env.MEMORY_TTL_MS) : null,
     embeddingModel: env.MEMORY_EMBEDDING_MODEL || undefined,
+    toolPolicies: parseToolPolicies(env.TOOL_POLICIES),
   };
 }
 
@@ -49,4 +52,21 @@ function parseRouterMode(raw: string | undefined): RouterMode {
     throw new Error(`Invalid ROUTER_MODE: ${raw}. Expected static | shadow | adaptive.`);
   }
   return "shadow";
+}
+
+/**
+ * Tool policies as JSON, e.g. `{"local":{"allow":["files:read_*"]}}`.
+ *
+ * A malformed policy fails startup rather than falling back to a permissive default — silently
+ * granting broader tool access than intended is the failure worth being loud about.
+ */
+function parseToolPolicies(
+  raw: string | undefined,
+): Record<string, { allow: string[]; deny?: string[] }> {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, { allow: string[]; deny?: string[] }>;
+  } catch (error) {
+    throw new Error(`Invalid TOOL_POLICIES JSON: ${(error as Error).message}`);
+  }
 }

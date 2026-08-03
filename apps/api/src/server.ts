@@ -20,6 +20,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { z } from "zod";
 import type { Container } from "./container.js";
 import { ModelNodeExecutor } from "./executors/model-node.js";
+import { ToolNodeExecutor } from "./executors/tool-node.js";
 
 /** The text a recall query is built from: the caller's most recent turn. */
 function lastUserText(messages: { role: string; content: unknown }[]): string {
@@ -212,6 +213,7 @@ export function buildServer(container: Container): FastifyInstance {
     executors: {
       transform: new TransformExecutor(),
       checkpoint: new CheckpointExecutor(),
+      tool: new ToolNodeExecutor(container.tools),
       model: new ModelNodeExecutor({
         gateway: container.gateway,
         router: container.router,
@@ -295,6 +297,25 @@ export function buildServer(container: Container): FastifyInstance {
         tenantId: container.config.defaultTenantId,
         ...(query.status ? { status: query.status } : {}),
         limit: query.limit ? Number(query.limit) : 50,
+      }),
+    };
+  });
+
+  // --- tools ----------------------------------------------------------------
+
+  app.get("/v1/tools", async () => ({
+    // Scoped to what this tenant's policy actually permits — listing tools it cannot call would
+    // just invite confusing failures.
+    data: container.tools.toolsFor(container.config.defaultTenantId),
+  }));
+
+  app.get("/v1/tools/audit", async (request: FastifyRequest) => {
+    const query = request.query as { tool?: string; limit?: string };
+    return {
+      data: container.toolAudit.list({
+        tenantId: container.config.defaultTenantId,
+        ...(query.tool ? { tool: query.tool } : {}),
+        limit: query.limit ? Number(query.limit) : 100,
       }),
     };
   });
