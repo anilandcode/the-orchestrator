@@ -1,4 +1,10 @@
 import type { ExecutionPlan } from "@orchestrator/gateway";
+import {
+  CheckpointExecutor,
+  GraphRunner,
+  TransformExecutor,
+  WorkflowDefinitionSchema,
+} from "@orchestrator/orchestrator";
 import { CONFIDENCE, supersedes } from "@orchestrator/quality";
 import type { RoutingContext } from "@orchestrator/router";
 import {
@@ -13,6 +19,7 @@ import { aggregateByModel, summarize } from "@orchestrator/telemetry";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Container } from "./container.js";
+import { ModelNodeExecutor } from "./executors/model-node.js";
 
 /** Rough token estimate. Routing happens before the provider counts anything, so an estimate is
  *  all that exists at decision time — deliberately conservative rather than clever. */
@@ -158,6 +165,101 @@ export function buildServer(container: Container): FastifyInstance {
     }
 
     return reply.send({ ok: true, scored: revised });
+  });
+
+  // --- workflows ------------------------------------------------------------
+
+  // Executors are built here because the model node needs `settle`, which the server owns. The
+  // orchestrator itself never sees the gateway or the router.
+  const runner = new GraphRunner({
+    executors: {
+      transform: new TransformExecutor(),
+      checkpoint: new CheckpointExecutor(),
+      model: new ModelNodeExecutor({
+        gateway: container.gateway,
+        router: container.router,
+        decisions: container.decisions,
+        estimatePromptTokens,
+        onSettled: async (requestId, request, response) => {
+          await settle(container, requestId, {
+            request: request as UnifiedChatRequest,
+            response,
+          });
+        },
+      }),
+    },
+    store: container.runs,
+  });
+  container.attachRunner(runner);
+
+  app.post("/v1/runs", async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = request.body as { workflow?: unknown; input?: Record<string, unknown> };
+
+    const workflow = WorkflowDefinitionSchema.safeParse(body.workflow);
+    if (!workflow.success) {
+      // Validating the whole graph up front turns a run that would die halfway through into a
+      // definition error the caller can fix before spending anything.
+      return reply
+        .status(400)
+        .send({ error: { message: workflow.error.message, type: "invalid_request" } });
+    }
+
+    try {
+      const state = await runner.start(workflow.data, {
+        tenantId: container.config.defaultTenantId,
+        input: body.input ?? {},
+      });
+      return reply.send(state);
+    } catch (raw) {
+      const error = toOrchestratorError(raw);
+      return reply.status(statusFor(error)).send({
+        error: { message: error.message, type: error.errorClass, retryable: error.retryable },
+      });
+    }
+  });
+
+  app.post("/v1/runs/:runId/resume", async (request: FastifyRequest, reply: FastifyReply) => {
+    const { runId } = request.params as { runId: string };
+    const body = request.body as { workflow?: unknown; input?: Record<string, unknown> };
+
+    const workflow = WorkflowDefinitionSchema.safeParse(body.workflow);
+    if (!workflow.success) {
+      return reply
+        .status(400)
+        .send({ error: { message: workflow.error.message, type: "invalid_request" } });
+    }
+
+    try {
+      const state = await runner.resume(workflow.data, runId, body.input ?? {});
+      return reply.send(state);
+    } catch (raw) {
+      const error = toOrchestratorError(raw);
+      return reply.status(statusFor(error)).send({
+        error: { message: error.message, type: error.errorClass, retryable: error.retryable },
+      });
+    }
+  });
+
+  app.get("/v1/runs/:runId", async (request: FastifyRequest, reply: FastifyReply) => {
+    const { runId } = request.params as { runId: string };
+    const state = runner.getState(runId);
+    if (!state) {
+      return reply.status(404).send({ error: { message: "Unknown run", type: "invalid_request" } });
+    }
+    // The event log is returned alongside derived state: debugging a workflow means seeing what
+    // actually happened, not just where it ended up.
+    return reply.send({ state, events: container.runs.events(runId) });
+  });
+
+  app.get("/v1/runs", async (request: FastifyRequest) => {
+    const query = request.query as { status?: string; limit?: string };
+    return {
+      data: container.runs.list({
+        tenantId: container.config.defaultTenantId,
+        ...(query.status ? { status: query.status } : {}),
+        limit: query.limit ? Number(query.limit) : 50,
+      }),
+    };
   });
 
   app.get("/v1/stats", async (request: FastifyRequest) => {

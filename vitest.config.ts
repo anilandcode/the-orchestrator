@@ -19,6 +19,7 @@ export default defineConfig({
       "@orchestrator/gateway": pkg("gateway"),
       "@orchestrator/telemetry": pkg("telemetry"),
       "@orchestrator/router": pkg("router"),
+      "@orchestrator/orchestrator": pkg("orchestrator"),
     },
   },
   test: {

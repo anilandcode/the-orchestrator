@@ -5,6 +5,12 @@ import {
   type ProviderAdapter,
 } from "@orchestrator/gateway";
 import {
+  CheckpointExecutor,
+  type GraphRunner,
+  SqliteRunStore,
+  TransformExecutor,
+} from "@orchestrator/orchestrator";
+import {
   CodeStructureScorer,
   FinishReasonScorer,
   JsonSchemaScorer,
@@ -45,6 +51,10 @@ export interface Container {
   decisions: SqliteRoutingDecisionRepository;
   rewards: RewardService;
   quality: QualityPipeline;
+  runs: SqliteRunStore;
+  /** Assigned after construction: the model executor needs the settle callback the server owns. */
+  runner: GraphRunner | undefined;
+  attachRunner(runner: GraphRunner): void;
   close(): void;
 }
 
@@ -107,7 +117,9 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     stateStore: new SqliteStateStore(db),
   });
 
+  const runs = new SqliteRunStore(db);
   let closed = false;
+  let runner: GraphRunner | undefined;
 
   return {
     config,
@@ -118,6 +130,13 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     decisions,
     rewards,
     quality,
+    runs,
+    get runner() {
+      return runner;
+    },
+    attachRunner(next: GraphRunner) {
+      runner = next;
+    },
     close() {
       // Idempotent: SIGINT and SIGTERM can both fire during a shutdown, and a second close must not
       // throw on an already-closed connection and mask the real reason we are shutting down.
