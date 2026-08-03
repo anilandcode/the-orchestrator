@@ -1,0 +1,9 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+  - "tools/*"
+
+# pnpm blocks postinstall scripts by default. better-sqlite3 needs its native
+# binding compiled, so it is allowlisted explicitly rather than globally.
+onlyBuiltDependencies:
+  - better-sqlite3

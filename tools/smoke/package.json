@@ -1,0 +1,10 @@
+{
+  "name": "@orchestrator/smoke",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@orchestrator/gateway": "workspace:*",
+    "@orchestrator/shared": "workspace:*"
+  }
+}

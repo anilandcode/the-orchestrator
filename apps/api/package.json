@@ -1,0 +1,15 @@
+{
+  "name": "@orchestrator/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "dependencies": {
+    "@orchestrator/gateway": "workspace:*",
+    "@orchestrator/router": "workspace:*",
+    "@orchestrator/shared": "workspace:*",
+    "@orchestrator/telemetry": "workspace:*",
+    "fastify": "^5.2.0",
+    "zod": "^3.25.0"
+  }
+}

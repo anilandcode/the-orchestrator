@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/gateway" },
+    { "path": "./packages/telemetry" },
+    { "path": "./packages/router" },
+    { "path": "./apps/api" },
+    { "path": "./tools/replay" },
+    { "path": "./tools/smoke" }
+  ]
+}

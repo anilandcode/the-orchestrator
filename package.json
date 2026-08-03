@@ -1,0 +1,32 @@
+{
+  "name": "the-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "clean": "tsc -b --clean && rm -rf packages/*/dist apps/*/dist tools/*/dist",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:api": "tsc -b && tsx watch apps/api/src/index.ts",
+    "smoke": "tsc -b && tsx tools/smoke/src/index.ts",
+    "replay:simulate": "tsc -b && tsx tools/replay/src/simulate.ts",
+    "replay:seed": "tsc -b && tsx tools/replay/src/seed.ts",
+    "replay": "tsc -b && tsx tools/replay/src/replay.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

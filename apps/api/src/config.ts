@@ -1,0 +1,36 @@
+import type { RouterMode } from "@orchestrator/router";
+
+export interface ApiConfig {
+  port: number;
+  apiKey: string;
+  defaultTenantId: string;
+  dbPath: string;
+  routerMode: RouterMode;
+  linucbAlpha: number;
+  coldStartPulls: number;
+  openaiApiKey: string | undefined;
+  anthropicApiKey: string | undefined;
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
+  return {
+    port: Number(env.PORT ?? 3000),
+    apiKey: env.ORCHESTRATOR_API_KEY ?? "local-dev-key",
+    defaultTenantId: env.DEFAULT_TENANT_ID ?? "local",
+    dbPath: env.ORCHESTRATOR_DB_PATH ?? "./data/orchestrator.sqlite",
+    // Defaults to shadow: the bandit does not steer real traffic until replay justifies it.
+    routerMode: parseRouterMode(env.ROUTER_MODE),
+    linucbAlpha: Number(env.ROUTER_LINUCB_ALPHA ?? 0.6),
+    coldStartPulls: Number(env.ROUTER_COLD_START_PULLS ?? 25),
+    openaiApiKey: env.OPENAI_API_KEY || undefined,
+    anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
+  };
+}
+
+function parseRouterMode(raw: string | undefined): RouterMode {
+  if (raw === "static" || raw === "shadow" || raw === "adaptive") return raw;
+  if (raw) {
+    throw new Error(`Invalid ROUTER_MODE: ${raw}. Expected static | shadow | adaptive.`);
+  }
+  return "shadow";
+}
