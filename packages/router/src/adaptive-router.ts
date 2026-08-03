@@ -24,6 +24,12 @@ import type { StaticRouter } from "./static-router.js";
 export type RouterMode = "static" | "shadow" | "adaptive";
 
 export const DEFAULT_ROUTER_MODE: RouterMode = "shadow";
+/**
+ * Upper bound on decisions tracked in memory for outcome and revision matching. Late feedback beyond
+ * this horizon is dropped rather than retained forever — an unbounded map is a slow leak, and a
+ * signal this stale is worth little anyway.
+ */
+const MAX_TRACKED_DECISIONS = 10_000;
 export const DEFAULT_COLD_START_PULLS = 25;
 export const DEFAULT_STATE_KEY = "router:v1";
 
@@ -81,6 +87,15 @@ export class AdaptiveRouter implements Router {
   private readonly pending = new Map<
     string,
     { modelId: string; features: number[]; taskType: TaskType }
+  >();
+
+  /**
+   * Rewards already applied, keyed by decision. Retained so a later, better quality signal can
+   * correct the exact value rather than pile a second observation on top of it.
+   */
+  private readonly applied = new Map<
+    string,
+    { modelId: string; features: number[]; taskType?: TaskType; reward: number }
   >();
 
   constructor(config: AdaptiveRouterConfig) {
@@ -179,8 +194,44 @@ export class AdaptiveRouter implements Router {
       this.taskPulls.set(taskType, (this.taskPulls.get(taskType) ?? 0) + 1);
     }
 
+    // Retained so a late-arriving quality signal can correct exactly this reward. Without the
+    // applied value there is no delta to apply, and re-teaching would double-count.
+    if (outcome.decisionId) {
+      this.applied.set(outcome.decisionId, {
+        modelId,
+        features,
+        reward: outcome.reward,
+        ...(taskType ? { taskType } : {}),
+      });
+      this.evictOldest(this.applied);
+    }
+
     this.observationsSincePersist += 1;
     if (this.observationsSincePersist >= this.persistEvery) this.persist();
+  }
+
+  /**
+   * Replace the reward previously applied for a decision.
+   *
+   * Called when a better quality signal lands — a deferred judge, or a human via `/v1/feedback`.
+   * Returns false when the decision is no longer tracked, which is expected rather than exceptional:
+   * feedback can arrive after a restart or after the bounded map has evicted the entry.
+   */
+  reviseOutcome(decisionId: string, newReward: number): boolean {
+    const previous = this.applied.get(decisionId);
+    if (!previous) return false;
+
+    this.bandit.revise(previous.modelId, previous.features, previous.reward, newReward);
+    this.applied.set(decisionId, { ...previous, reward: newReward });
+
+    this.observationsSincePersist += 1;
+    if (this.observationsSincePersist >= this.persistEvery) this.persist();
+    return true;
+  }
+
+  /** The reward currently credited to a decision, if it is still tracked. */
+  appliedRewardFor(decisionId: string): number | undefined {
+    return this.applied.get(decisionId)?.reward;
   }
 
   /** Settle by decision id alone, so callers do not have to retain the feature vector. */
@@ -237,11 +288,17 @@ export class AdaptiveRouter implements Router {
     taskType: TaskType,
   ): void {
     this.pending.set(decisionId, { modelId, features, taskType });
-    // Bound the map: an outcome that never arrives must not leak memory forever.
-    if (this.pending.size > 10_000) {
-      const oldest = this.pending.keys().next().value;
-      if (oldest) this.pending.delete(oldest);
-    }
+    this.evictOldest(this.pending);
+  }
+
+  /**
+   * Bound a tracking map so an outcome (or a revision) that never arrives cannot leak memory.
+   * Map iteration is insertion-ordered, so the first key is the oldest.
+   */
+  private evictOldest(map: Map<string, unknown>): void {
+    if (map.size <= MAX_TRACKED_DECISIONS) return;
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
   }
 }
 

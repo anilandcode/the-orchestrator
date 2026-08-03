@@ -1,8 +1,11 @@
 import type { ExecutionPlan } from "@orchestrator/gateway";
+import { CONFIDENCE, supersedes } from "@orchestrator/quality";
 import type { RoutingContext } from "@orchestrator/router";
 import {
   type OrchestratorError,
+  type UnifiedChatRequest,
   UnifiedChatRequestSchema,
+  type UnifiedChatResponse,
   systemIds,
   toOrchestratorError,
 } from "@orchestrator/shared";
@@ -96,13 +99,20 @@ export function buildServer(container: Container): FastifyInstance {
       };
 
       const response = await container.gateway.chat(chatRequest, plan);
-      settle(container, chatRequest.requestId);
+      await settle(container, chatRequest.requestId, { request: chatRequest, response });
+
+      // Deferred scoring runs after the reply is sent. Awaiting it here would add the judge's
+      // latency to the very call it is grading, and the reward function would read that as the
+      // graded model being slow.
+      void scoreDeferred(container, app, chatRequest, response).catch((error: unknown) => {
+        app.log.warn({ error }, "deferred quality scoring failed");
+      });
 
       return reply.send(response);
     } catch (raw) {
       const error = toOrchestratorError(raw);
       // Even a total failure teaches the router something, so settle before returning.
-      settle(container, chatRequest.requestId);
+      await settle(container, chatRequest.requestId);
 
       return reply.status(statusFor(error)).send({
         error: {
@@ -129,19 +139,25 @@ export function buildServer(container: Container): FastifyInstance {
         .send({ error: { message: "Unknown requestId", type: "invalid_request" } });
     }
 
-    // An explicit quality signal beats the heuristic, so re-score and re-teach the router.
+    // A human's verdict is the highest-authority signal there is, so it always supersedes.
+    // This revises the existing reward rather than adding a second observation — re-teaching would
+    // double-count the call and inflate the arm's apparent confidence.
+    let revised = 0;
     for (const event of events) {
       if (event.status !== "success") continue;
-      const reward = container.rewards.settle(event, parsed.data.quality);
-      container.router.observe({
-        modelId: event.modelId,
-        features: event.features,
-        taskType: event.taskType,
-        reward,
+
+      const { reward } = container.rewards.rescore(event, parsed.data.quality, {
+        source: "client-feedback",
+        confidence: CONFIDENCE.human,
       });
+
+      if (event.routingDecisionId) {
+        container.router.reviseOutcome(event.routingDecisionId, reward);
+      }
+      revised += 1;
     }
 
-    return reply.send({ ok: true, scored: events.length });
+    return reply.send({ ok: true, scored: revised });
   });
 
   app.get("/v1/stats", async (request: FastifyRequest) => {
@@ -168,17 +184,86 @@ export function buildServer(container: Container): FastifyInstance {
  *
  * Per attempt, not per request: if the primary failed and a fallback succeeded, the router must
  * learn both facts. Collapsing them would credit the fallback's success to the model that broke.
+ *
+ * Inline scorers run here — they are free and deterministic. When a successful response is available
+ * they get to grade it; failed attempts skip straight to the reward function, which zeroes them.
  */
-function settle(container: Container, requestId: string): void {
+async function settle(
+  container: Container,
+  requestId: string,
+  graded?: { request: UnifiedChatRequest; response: UnifiedChatResponse },
+): Promise<void> {
   for (const event of container.events.query({ requestId })) {
-    const reward = container.rewards.settle(event);
+    let quality: number | null | undefined;
+    let provenance: { source: string; confidence: number } | undefined;
+
+    // Only the attempt that actually produced the returned response can be graded against it.
+    const isGradedAttempt =
+      graded !== undefined &&
+      event.status === "success" &&
+      event.modelId === graded.response.modelId;
+
+    if (isGradedAttempt) {
+      const assessment = await container.quality.assessInline({
+        request: graded.request,
+        response: graded.response,
+        event,
+      });
+      if (assessment) {
+        quality = assessment.score;
+        provenance = { source: assessment.source, confidence: assessment.confidence };
+      }
+    }
+
+    const reward = container.rewards.settle(event, quality, provenance);
     container.router.observe({
+      decisionId: event.routingDecisionId ?? undefined,
       modelId: event.modelId,
       features: event.features,
       taskType: event.taskType,
       reward,
     });
   }
+}
+
+/**
+ * Runs deferred scorers (today: the sampled LLM judge) and corrects what the router already learned.
+ *
+ * This is a revision, not a second observation — `reviseOutcome` applies the delta so the arm ends up
+ * where it would have been had the better score arrived first. Re-teaching instead would double-count.
+ */
+async function scoreDeferred(
+  container: Container,
+  app: FastifyInstance,
+  request: UnifiedChatRequest,
+  response: UnifiedChatResponse,
+): Promise<void> {
+  if (container.quality.deferredScorers.length === 0) return;
+
+  const events = container.events.query({ requestId: response.requestId });
+  const event = events.find(
+    (candidate) => candidate.status === "success" && candidate.modelId === response.modelId,
+  );
+  if (!event) return;
+
+  const assessment = await container.quality.assessDeferred({ request, response, event });
+  if (!assessment) return;
+  // A weaker signal must not overwrite a stronger one already recorded.
+  if (!supersedes(assessment, event.qualityConfidence)) return;
+
+  const { previousReward, reward } = container.rewards.rescore(event, assessment.score, {
+    source: assessment.source,
+    confidence: assessment.confidence,
+  });
+
+  if (event.routingDecisionId) {
+    container.router.reviseOutcome(event.routingDecisionId, reward);
+  }
+
+  app.log.debug(
+    { modelId: event.modelId, source: assessment.source, previousReward, reward },
+    "quality revised by deferred scorer",
+  );
 }
 
 function statusFor(error: OrchestratorError): number {

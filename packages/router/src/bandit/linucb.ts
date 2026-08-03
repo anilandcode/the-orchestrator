@@ -35,9 +35,13 @@ export interface LinUcbConfig {
   /** Ridge regularization. */
   lambda?: number;
   /**
-   * Probability of ignoring the scores and pulling the least-explored arm. LinUCB's own uncertainty
-   * term usually suffices; this is a floor against pathological cases where one arm's estimate
-   * collapses early and starves the rest.
+   * Probability of ignoring the scores and pulling the least-explored arm.
+   *
+   * **Defaults to 0, deliberately.** LinUCB's uncertainty term already explores, and does it
+   * proportionally to what it does not know. A flat random floor explores unconditionally, at a cost
+   * equal to its rate — and simulation showed that a 3% floor against a ~2% headroom over the static
+   * baseline spends more than optimal routing could ever return. Size any floor you add against the
+   * headroom you are actually chasing.
    */
   explorationFloor?: number;
   random?: () => number;
@@ -57,7 +61,7 @@ export class LinUcbBandit implements Bandit {
     this.dimension = config.dimension;
     this.alpha = config.alpha ?? 0.6;
     this.lambda = config.lambda ?? 1;
-    this.explorationFloor = config.explorationFloor ?? 0.05;
+    this.explorationFloor = config.explorationFloor ?? 0;
     this.random = config.random ?? Math.random;
   }
 
@@ -118,6 +122,37 @@ export class LinUcbBandit implements Bandit {
 
     arm.pulls += 1;
     arm.totalReward += reward;
+  }
+
+  /**
+   * Correct a reward that was already applied.
+   *
+   * Quality signals arrive at different times: a validator refines the provisional reward moments
+   * later, a sampled judge minutes later, a human hours later. By then the arm has already learned
+   * from the provisional value.
+   *
+   * The correction is exact rather than approximate, which is a genuine property of the algorithm:
+   * `A` is built from `x xᵀ` alone and never depends on the reward, and `b` accumulates `reward · x`
+   * linearly. Adding `(new − old) · x` therefore lands the arm in the state it would have reached had
+   * the final reward been known up front — no double counting, and no need to stall learning behind
+   * a timeout waiting for the signal to settle.
+   *
+   * `pulls` is deliberately untouched: this is one observation being corrected, not a second one.
+   */
+  revise(armId: string, features: number[], oldReward: number, newReward: number): void {
+    const arm = this.arms.get(armId);
+    // Nothing to correct on an arm that was never pulled — silently ignoring is right here, since a
+    // late-arriving signal for an evicted or restored-away decision is expected, not exceptional.
+    if (!arm) return;
+
+    const delta = newReward - oldReward;
+    if (delta === 0) return;
+
+    const x = this.toVector(features);
+    for (let i = 0; i < this.dimension; i++) {
+      arm.b[i] = (arm.b[i] ?? 0) + delta * (x[i] ?? 0);
+    }
+    arm.totalReward += delta;
   }
 
   pulls(armId: string): number {

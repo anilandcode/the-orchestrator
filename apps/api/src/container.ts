@@ -5,6 +5,15 @@ import {
   type ProviderAdapter,
 } from "@orchestrator/gateway";
 import {
+  CodeStructureScorer,
+  FinishReasonScorer,
+  JsonSchemaScorer,
+  LlmJudgeScorer,
+  QualityPipeline,
+  type QualityScorer,
+  ToolCallScorer,
+} from "@orchestrator/quality";
+import {
   AdaptiveRouter,
   FEATURE_DIMENSION,
   LinUcbBandit,
@@ -35,6 +44,7 @@ export interface Container {
   events: SqliteCallEventRepository;
   decisions: SqliteRoutingDecisionRepository;
   rewards: RewardService;
+  quality: QualityPipeline;
   close(): void;
 }
 
@@ -66,6 +76,28 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
 
   const gateway = new Gateway({ adapters, registry, sink: events });
 
+  // Order is irrelevant — the pipeline picks by confidence, not by position — but the floor is
+  // listed last as a reminder that it is the fallback, not a peer of the real validators.
+  const scorers: QualityScorer[] = [
+    new ToolCallScorer(),
+    new JsonSchemaScorer(),
+    new CodeStructureScorer(),
+    new FinishReasonScorer(),
+  ];
+
+  if (config.judgeEnabled) {
+    scorers.push(
+      new LlmJudgeScorer({
+        gateway,
+        modelId: config.judgeModel,
+        sampleRate: config.judgeSampleRate,
+        maxUsdPerHour: config.judgeMaxUsdPerHour,
+      }),
+    );
+  }
+
+  const quality = new QualityPipeline(scorers);
+
   const baseline = new StaticRouter();
   const router = new AdaptiveRouter({
     bandit: new LinUcbBandit({ dimension: FEATURE_DIMENSION, alpha: config.linucbAlpha }),
@@ -85,6 +117,7 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     events,
     decisions,
     rewards,
+    quality,
     close() {
       // Idempotent: SIGINT and SIGTERM can both fire during a shutdown, and a second close must not
       // throw on an already-closed connection and mask the real reason we are shutting down.

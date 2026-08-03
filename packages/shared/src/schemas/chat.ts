@@ -84,6 +84,14 @@ export const RouteHintSchema = z.object({
   maxLatencyMs: z.number().positive().optional(),
   /** Escape hatch: bypass routing entirely and use this model. */
   pin: z.string().optional(),
+  /**
+   * JSON Schema the caller expects the response to satisfy.
+   *
+   * Optional, and purely a *quality signal* — the gateway does not enforce it. Declaring it lets the
+   * schema validator grade the answer deterministically instead of falling back to the heuristic,
+   * which is the difference between the bandit learning something and learning a constant.
+   */
+  outputSchema: z.record(z.string(), z.unknown()).optional(),
 });
 export type RouteHint = z.infer<typeof RouteHintSchema>;
 

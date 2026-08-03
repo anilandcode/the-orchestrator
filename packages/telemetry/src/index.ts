@@ -1,5 +1,6 @@
 export * from "./aggregate.js";
 export * from "./migrations/call-events.js";
+export * from "./migrations/quality-provenance.js";
 export * from "./migrations/routing-decisions.js";
 export * from "./reward.js";
 export * from "./store/database.js";

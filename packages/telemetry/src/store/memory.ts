@@ -1,5 +1,5 @@
 import type { CallEvent } from "@orchestrator/shared";
-import type { CallEventQuery, CallEventRepository } from "./repository.js";
+import type { CallEventQuery, CallEventRepository, QualityProvenance } from "./repository.js";
 
 /**
  * In-memory repository. Used by the replay simulator, which generates far more events than are worth
@@ -16,11 +16,21 @@ export class InMemoryCallEventRepository implements CallEventRepository {
     this.events.push(...events);
   }
 
-  scoreEvent(id: string, qualityScore: number | null, reward: number): void {
+  scoreEvent(
+    id: string,
+    qualityScore: number | null,
+    reward: number,
+    provenance?: QualityProvenance,
+  ): void {
     const event = this.events.find((candidate) => candidate.id === id);
-    if (event) {
-      event.qualityScore = qualityScore;
-      event.reward = reward;
+    if (!event) return;
+
+    event.qualityScore = qualityScore;
+    event.reward = reward;
+    if (provenance) {
+      event.qualitySource = provenance.source;
+      event.qualityConfidence = provenance.confidence;
+      if (provenance.isRevision) event.qualityRevisions += 1;
     }
   }
 

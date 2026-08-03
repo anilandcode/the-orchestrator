@@ -116,7 +116,33 @@ export const MODEL_PROFILES: Record<string, ModelProfile> = {
 export interface SimulatedCall {
   event: CallEvent;
   reward: number;
+  /** The model's true quality on this draw, which the router does not get to see directly. */
+  latentQuality: number;
+  /** What a scorer was actually able to measure, and how confident it was. */
+  observed: { quality: number; source: string };
 }
+
+/**
+ * Task types a deterministic validator can actually grade.
+ *
+ * This is the crux of Phase 4.5. Extraction has a declarable output schema, code has checkable
+ * structure, and classification has an enum to validate against — a validator reads real quality off
+ * those. Open-ended prose has none of that, so absent a judge the only signal is "it did not error",
+ * which is a constant.
+ *
+ * Modelling that split is what makes the simulation honest: the earlier version handed the router
+ * true quality on every call, which no deployment will ever have.
+ */
+export const VALIDATOR_COVERED: ReadonlySet<TaskType> = new Set<TaskType>([
+  "extraction",
+  "code",
+  "classification",
+]);
+
+export type Observability = "validated" | "heuristic-only";
+
+/** The constant a clean success scores when nothing can actually grade it. */
+const HEURISTIC_SUCCESS_QUALITY = 0.8;
 
 export interface SimulationInputs {
   spec: ModelSpec;
@@ -126,6 +152,11 @@ export interface SimulationInputs {
   completionTokens: number;
   features: number[];
   random: () => number;
+  /**
+   * `validated` — validators grade covered task types; everything else falls to the heuristic.
+   * `heuristic-only` — nothing grades anything. This is the pre-Phase-4.5 world, kept as the control.
+   */
+  observability?: Observability;
 }
 
 /** Draws one outcome and scores it with the real reward function, not a stand-in. */
@@ -145,9 +176,32 @@ export function simulateCall(inputs: SimulationInputs): SimulatedCall {
     ? inputs.spec.typicalLatencyMs * 0.3
     : inputs.spec.typicalLatencyMs * (1 + (inputs.random() - 0.5) * 2 * profile.latencyJitter);
 
-  const quality = failed
+  const latentQuality = failed
     ? 0
     : clamp01(profile.quality[inputs.taskType] + (inputs.random() - 0.5) * 0.15);
+
+  // What a scorer can actually see. A validator on a covered task reads latent quality closely; on
+  // anything else the router is left with a constant that carries no information about the model.
+  const observability = inputs.observability ?? "validated";
+  const covered = observability === "validated" && VALIDATOR_COVERED.has(inputs.taskType);
+
+  let observedQuality: number;
+  let source: string;
+
+  if (failed) {
+    observedQuality = 0;
+    source = "finish-reason";
+  } else if (covered) {
+    // Validators are binary in practice — the JSON parses or it does not, the code balances or it
+    // does not — so a latent quality of 0.9 shows up as a 90% chance of scoring 1.
+    observedQuality = inputs.random() < latentQuality ? 1 : 0;
+    source = inputs.taskType === "code" ? "code-structure" : "json-schema";
+  } else {
+    observedQuality = HEURISTIC_SUCCESS_QUALITY;
+    source = "finish-reason";
+  }
+
+  const quality = observedQuality;
 
   const event = CallEventSchema.parse({
     id: "sim",
@@ -166,11 +220,17 @@ export function simulateCall(inputs: SimulationInputs): SimulatedCall {
     status: failed ? "error" : "success",
     errorClass: failed ? "provider_unavailable" : null,
     finishReason: failed ? null : "stop",
-    qualityScore: failed ? 0 : quality,
+    qualityScore: quality,
+    qualitySource: source,
     createdAt: Date.now(),
   });
 
-  return { event, reward: computeReward(event, { quality: failed ? 0 : quality }) };
+  return {
+    event,
+    reward: computeReward(event, { quality }),
+    latentQuality,
+    observed: { quality, source },
+  };
 }
 
 /**

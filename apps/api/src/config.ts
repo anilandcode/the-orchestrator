@@ -10,6 +10,11 @@ export interface ApiConfig {
   coldStartPulls: number;
   openaiApiKey: string | undefined;
   anthropicApiKey: string | undefined;
+  /** The judge costs real money per graded call, so it is opt-in. */
+  judgeEnabled: boolean;
+  judgeModel: string;
+  judgeSampleRate: number;
+  judgeMaxUsdPerHour: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -24,6 +29,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     coldStartPulls: Number(env.ROUTER_COLD_START_PULLS ?? 25),
     openaiApiKey: env.OPENAI_API_KEY || undefined,
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
+    // Off by default: enabling it starts billing for calls the user did not make.
+    judgeEnabled: env.QUALITY_JUDGE_ENABLED === "true",
+    judgeModel: env.QUALITY_JUDGE_MODEL ?? "openai/gpt-4o-mini",
+    judgeSampleRate: Number(env.QUALITY_JUDGE_SAMPLE_RATE ?? 0.05),
+    judgeMaxUsdPerHour: Number(env.QUALITY_JUDGE_MAX_USD_PER_HOUR ?? 1),
   };
 }
 

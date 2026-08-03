@@ -197,8 +197,10 @@ it is good or because only the lenient scorer ever rated it.
 
 1. **Unit** — each validator abstains correctly (`undefined`, never `0`); pipeline precedence; cost cap trips.
 2. **Revision correctness** — the property test that matters: for a random sequence of rewards and
-   corrections, a LinUCB arm updated-then-revised must be **bit-identical** to one trained on the final
-   values directly. If that fails, revision is silently corrupting learning.
+   corrections, a LinUCB arm updated-then-revised must match one trained on the final values directly.
+   `A` matches **exactly** (it never depends on reward); `b` matches to floating-point tolerance,
+   because the two paths accumulate the same sum in a different order. If this fails, revision is
+   silently corrupting learning — no error, just a router growing confident about the wrong thing.
 3. **Simulation** — extend `tools/replay/src/world.ts` so simulated quality is *observable* through a
    validator rather than known outright. Re-run `pnpm replay:simulate`; expect the gap-closed figure
    to move materially above 31.4%. If it does not, the quality signal is not carrying information and
@@ -210,6 +212,47 @@ it is good or because only the lenient scorer ever rated it.
 
 Executing model-generated code in a sandbox; multi-judge consensus; learned quality models; anything
 in Phases 5–8.
+
+---
+
+## Result (measured after implementation)
+
+Simulation, 8,000 rounds, quality observable **only where a validator covers the task** — the earlier
+run handed the router true quality on every call, which no deployment ever has.
+
+| Strategy | Optimal picks (all) | **Optimal picks (validator-covered)** | True value |
+|---|---:|---:|---:|
+| static baseline | 37.1% | **45.3%** | 6747.0 |
+| LinUCB, heuristic quality only | 35.2% | **51.4%** | 6481.0 |
+| LinUCB, validated quality | 37.3% | **56.4%** | 6615.8 |
+| *oracle* | 100% | 100% | 6891.6 |
+
+**Two findings, one good and one uncomfortable.**
+
+1. **Where quality is observable, the bandit routes materially better than the rules** — 56.4% vs
+   45.3% optimal picks — and the quality signal accounts for 5 of those 11 points. The wedge is real,
+   conditionally.
+
+2. **Overall, the bandit still loses to static on total value** (6615.8 vs 6747.0). The static rules
+   sit within 2.10% of optimal in this world, and the bandit's mistakes on tasks no validator can
+   grade cost more than that entire headroom is worth. The previously reported "31.4% of the gap
+   closed" was an artifact of perfect quality observation and does not survive honest partial
+   observability.
+
+A related discovery: `explorationFloor` defaulted to 0.05, meaning 5% of traffic was routed to a
+deliberately sub-optimal arm — more than twice the 2.10% headroom the whole exercise was chasing. It
+now defaults to 0; LinUCB's uncertainty term explores in proportion to what it does not know, which a
+flat random floor does not. **Any exploration budget must be sized against the headroom it chases.**
+
+### What this changes
+
+- `ROUTER_MODE=shadow` remains the right default, now on evidence rather than caution.
+- The natural next step is **gating adaptive routing to validator-covered task types** and leaving
+  everything else on static rules — routing adaptively only where the system can actually see
+  outcomes.
+- CI asserts the claim the evidence supports (bandit beats static *on covered tasks*, validators beat
+  the heuristic) and deliberately does **not** assert overall superiority, which would either fail
+  forever or invite quietly reshaping the world until it passed.
 
 ## Success criterion
 

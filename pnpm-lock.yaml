@@ -32,6 +32,9 @@ importers:
       '@orchestrator/gateway':
         specifier: workspace:*
         version: link:../../packages/gateway
+      '@orchestrator/quality':
+        specifier: workspace:*
+        version: link:../../packages/quality
       '@orchestrator/router':
         specifier: workspace:*
         version: link:../../packages/router
@@ -50,6 +53,15 @@ importers:
 
   packages/gateway:
     dependencies:
+      '@orchestrator/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/quality:
+    dependencies:
+      '@orchestrator/gateway':
+        specifier: workspace:*
+        version: link:../gateway
       '@orchestrator/shared':
         specifier: workspace:*
         version: link:../shared

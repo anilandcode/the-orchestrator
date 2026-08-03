@@ -15,6 +15,7 @@ export default defineConfig({
     // package.json exports -> dist.
     alias: {
       "@orchestrator/shared": pkg("shared"),
+      "@orchestrator/quality": pkg("quality"),
       "@orchestrator/gateway": pkg("gateway"),
       "@orchestrator/telemetry": pkg("telemetry"),
       "@orchestrator/router": pkg("router"),

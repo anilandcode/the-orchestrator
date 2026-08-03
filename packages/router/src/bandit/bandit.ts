@@ -32,6 +32,14 @@ export interface Bandit {
   /** Picks among the arms the caller says are currently valid. */
   select(armIds: string[], features: number[]): BanditChoice;
   update(armId: string, features: number[], reward: number): void;
+  /**
+   * Correct a reward already applied by `update`, without counting a second observation.
+   *
+   * Quality signals land at different times — an inline validator, then a sampled judge, then a
+   * human. Without revision the bandit would be permanently trained on whichever signal happened to
+   * arrive first.
+   */
+  revise(armId: string, features: number[], oldReward: number, newReward: number): void;
   pulls(armId: string): number;
   averageReward(armId: string): number;
   snapshot(): BanditState;

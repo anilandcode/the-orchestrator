@@ -1,7 +1,8 @@
 import { type CallEvent, CallEventSchema } from "@orchestrator/shared";
 import { CALL_EVENT_MIGRATIONS } from "../migrations/call-events.js";
+import { QUALITY_PROVENANCE_MIGRATIONS } from "../migrations/quality-provenance.js";
 import { type Db, openDatabase, runMigrations } from "./database.js";
-import type { CallEventQuery, CallEventRepository } from "./repository.js";
+import type { CallEventQuery, CallEventRepository, QualityProvenance } from "./repository.js";
 
 interface CallEventRow {
   id: string;
@@ -24,6 +25,10 @@ interface CallEventRow {
   error_class: string | null;
   finish_reason: string | null;
   quality_score: number | null;
+  quality_source: string | null;
+  quality_confidence: number | null;
+  quality_revisions: number;
+  is_judge: number;
   reward: number | null;
   created_at: number;
 }
@@ -33,12 +38,14 @@ const INSERT_SQL = `
     id, tenant_id, request_id, routing_decision_id, attempt,
     provider, model_id, task_type, route_mode, features,
     prompt_tokens, completion_tokens, cached_prompt_tokens, cost_usd, latency_ms, ttft_ms,
-    status, error_class, finish_reason, quality_score, reward, created_at
+    status, error_class, finish_reason, quality_score, reward, created_at,
+    quality_source, quality_confidence, quality_revisions, is_judge
   ) VALUES (
     @id, @tenant_id, @request_id, @routing_decision_id, @attempt,
     @provider, @model_id, @task_type, @route_mode, @features,
     @prompt_tokens, @completion_tokens, @cached_prompt_tokens, @cost_usd, @latency_ms, @ttft_ms,
-    @status, @error_class, @finish_reason, @quality_score, @reward, @created_at
+    @status, @error_class, @finish_reason, @quality_score, @reward, @created_at,
+    @quality_source, @quality_confidence, @quality_revisions, @is_judge
   )
 `;
 
@@ -54,7 +61,7 @@ export class SqliteCallEventRepository implements CallEventRepository {
       this.db = source;
       this.ownsConnection = false;
     }
-    runMigrations(this.db, CALL_EVENT_MIGRATIONS);
+    runMigrations(this.db, [...CALL_EVENT_MIGRATIONS, ...QUALITY_PROVENANCE_MIGRATIONS]);
   }
 
   get connection(): Db {
@@ -73,10 +80,32 @@ export class SqliteCallEventRepository implements CallEventRepository {
     insertAll(events);
   }
 
-  scoreEvent(id: string, qualityScore: number | null, reward: number): void {
+  scoreEvent(
+    id: string,
+    qualityScore: number | null,
+    reward: number,
+    provenance?: QualityProvenance,
+  ): void {
+    // The revision counter increments in SQL rather than read-modify-write, so concurrent scorers
+    // settling the same event cannot lose a count between the read and the write.
     this.db
-      .prepare("UPDATE call_events SET quality_score = ?, reward = ? WHERE id = ?")
-      .run(qualityScore, reward, id);
+      .prepare(
+        `UPDATE call_events
+            SET quality_score = ?,
+                reward = ?,
+                quality_source = COALESCE(?, quality_source),
+                quality_confidence = COALESCE(?, quality_confidence),
+                quality_revisions = quality_revisions + ?
+          WHERE id = ?`,
+      )
+      .run(
+        qualityScore,
+        reward,
+        provenance?.source ?? null,
+        provenance?.confidence ?? null,
+        provenance?.isRevision ? 1 : 0,
+        id,
+      );
   }
 
   query(query: CallEventQuery = {}): CallEvent[] {
@@ -162,6 +191,11 @@ function toRow(event: CallEvent): Record<string, unknown> {
     error_class: event.errorClass,
     finish_reason: event.finishReason,
     quality_score: event.qualityScore,
+    quality_source: event.qualitySource,
+    quality_confidence: event.qualityConfidence,
+    quality_revisions: event.qualityRevisions,
+    // SQLite has no boolean type; 0/1 is the storage convention.
+    is_judge: event.isJudge ? 1 : 0,
     reward: event.reward,
     created_at: event.createdAt,
   };
@@ -191,6 +225,10 @@ function fromRow(row: CallEventRow): CallEvent {
     errorClass: row.error_class,
     finishReason: row.finish_reason,
     qualityScore: row.quality_score,
+    qualitySource: row.quality_source,
+    qualityConfidence: row.quality_confidence,
+    qualityRevisions: row.quality_revisions,
+    isJudge: row.is_judge === 1,
     reward: row.reward,
     createdAt: row.created_at,
   });

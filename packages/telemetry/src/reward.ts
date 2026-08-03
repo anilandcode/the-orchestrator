@@ -1,5 +1,5 @@
 import type { CallEvent, RouteMode, TaskType } from "@orchestrator/shared";
-import type { CallEventRepository } from "./store/repository.js";
+import type { CallEventRepository, QualityProvenance } from "./store/repository.js";
 
 /**
  * The reward function. Everything the adaptive router learns comes through here, so a mistake in this
@@ -139,7 +139,7 @@ export class RewardService {
     private readonly normalizer: RollingNormalizer = new RollingNormalizer(),
   ) {}
 
-  settle(event: CallEvent, quality?: number | null): number {
+  settle(event: CallEvent, quality?: number | null, provenance?: QualityProvenance): number {
     this.normalizer.observe(event);
 
     const stats = this.normalizer.statsFor(event.taskType);
@@ -151,8 +151,36 @@ export class RewardService {
     const qualityScore =
       quality ?? event.qualityScore ?? (event.status === "error" ? 0 : heuristicQuality(event));
 
-    this.repository.scoreEvent(event.id, qualityScore, reward);
+    this.repository.scoreEvent(event.id, qualityScore, reward, provenance);
     return reward;
+  }
+
+  /**
+   * Re-score an event that already has a reward, because a higher-authority signal arrived.
+   *
+   * Returns both values: the router needs the delta to correct the bandit exactly rather than
+   * applying a second observation on top of the first. Callers that discard `previousReward` and
+   * simply re-teach will double-count.
+   *
+   * The normalizer is deliberately NOT re-observed — the call's cost and latency have not changed,
+   * only our judgement of the answer, and counting it twice would skew the rolling percentiles.
+   */
+  rescore(
+    event: CallEvent,
+    quality: number,
+    provenance?: QualityProvenance,
+  ): { previousReward: number; reward: number } {
+    const stats = this.normalizer.statsFor(event.taskType);
+    const previousReward = event.reward ?? computeReward(event, { stats });
+    const reward = computeReward(event, { stats, quality });
+
+    this.repository.scoreEvent(event.id, quality, reward, {
+      source: provenance?.source ?? "unknown",
+      confidence: provenance?.confidence ?? 1,
+      isRevision: true,
+    });
+
+    return { previousReward, reward };
   }
 
   statsFor(taskType: TaskType): NormalizationStats {

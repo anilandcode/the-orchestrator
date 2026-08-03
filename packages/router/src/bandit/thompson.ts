@@ -14,6 +14,9 @@ import type { Bandit, BanditChoice, BanditState, SerializedArm } from "./bandit.
 
 export const THOMPSON_STATE_VERSION = 1;
 
+/** Beta requires strictly positive parameters; corrections are clamped rather than allowed to zero. */
+const MIN_BETA_PARAM = 1e-6;
+
 interface Arm {
   alpha: number;
   beta: number;
@@ -65,11 +68,31 @@ export class ThompsonBandit implements Bandit {
 
   update(armId: string, _features: number[], reward: number): void {
     const arm = this.arm(armId);
-    const clamped = Math.min(1, Math.max(0, reward));
+    const clamped = clamp01(reward);
     arm.alpha += clamped;
     arm.beta += 1 - clamped;
     arm.pulls += 1;
     arm.totalReward += clamped;
+  }
+
+  /**
+   * Correct an already-applied reward by shifting mass between the Beta parameters.
+   *
+   * Unlike LinUCB this is only *approximately* reversible: alpha and beta are clamped away from zero
+   * to keep the distribution proper, so a correction against a near-degenerate posterior can lose a
+   * sliver of the delta. That is acceptable for a control arm and is one more reason LinUCB is the
+   * primary — its correction is exact.
+   */
+  revise(armId: string, _features: number[], oldReward: number, newReward: number): void {
+    const arm = this.arms.get(armId);
+    if (!arm) return;
+
+    const delta = clamp01(newReward) - clamp01(oldReward);
+    if (delta === 0) return;
+
+    arm.alpha = Math.max(MIN_BETA_PARAM, arm.alpha + delta);
+    arm.beta = Math.max(MIN_BETA_PARAM, arm.beta - delta);
+    arm.totalReward += delta;
   }
 
   pulls(armId: string): number {
@@ -117,6 +140,10 @@ export class ThompsonBandit implements Bandit {
     this.arms.set(armId, arm);
     return arm;
   }
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 /** Beta(a,b) via the ratio of two Gamma draws. */

@@ -45,6 +45,20 @@ export const CallEventSchema = z.object({
 
   /** 0..1. Populated by a QualityScorer or by explicit feedback; null until then. */
   qualityScore: z.number().min(0).max(1).nullable().default(null),
+  /**
+   * Which scorer produced `qualityScore`. Without this you cannot tell a genuinely better model from
+   * one that happened to be graded by a more lenient scorer.
+   */
+  qualitySource: z.string().nullable().default(null),
+  /** 0..1. How much authority the scorer claims; a strict validator outranks the heuristic floor. */
+  qualityConfidence: z.number().min(0).max(1).nullable().default(null),
+  /** How many times a later signal corrected this event's reward. */
+  qualityRevisions: z.number().int().nonnegative().default(0),
+  /**
+   * True for calls the LLM judge itself made. Real spend, but must never be routed on or counted as
+   * user traffic — otherwise the judge pollutes the statistics it exists to produce.
+   */
+  isJudge: z.boolean().default(false),
   /** 0..1. Computed by the telemetry reward function once quality is known. */
   reward: z.number().min(0).max(1).nullable().default(null),
 
