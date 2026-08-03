@@ -1,3 +1,4 @@
+import { CatalogService, SqliteCatalogStore } from "@orchestrator/catalog";
 import {
   AnthropicAdapter,
   Gateway,
@@ -32,8 +33,9 @@ import {
   LinUcbBandit,
   SqliteStateStore,
   StaticRouter,
+  extractFeatures,
 } from "@orchestrator/router";
-import { ModelRegistry } from "@orchestrator/shared";
+import { ModelRegistry, UnifiedChatRequestSchema } from "@orchestrator/shared";
 import {
   RewardService,
   RollingNormalizer,
@@ -61,6 +63,7 @@ export interface Container {
   runs: SqliteRunStore;
   memory: MemoryService;
   tools: ToolRegistry;
+  catalog: CatalogService;
   toolAudit: SqliteToolAuditLog;
   /** Assigned after construction: the model executor needs the settle callback the server owns. */
   runner: GraphRunner | undefined;
@@ -85,6 +88,12 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
   const rewards = new RewardService(events, normalizer);
 
   const registry = new ModelRegistry();
+
+  // Ingested pricing and context windows replace the hand-written defaults where a reviewed snapshot
+  // exists. Applying only what was already promoted keeps boot from re-litigating a decision that
+  // was made once, deliberately, at `catalog:refresh --apply` time.
+  const catalog = new CatalogService({ store: new SqliteCatalogStore(db), registry });
+  catalog.applyStored();
 
   const adapters: ProviderAdapter[] = overrides.adapters ?? [];
   if (!overrides.adapters) {
@@ -127,6 +136,23 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     stateStore: new SqliteStateStore(db),
   });
 
+  // Priors are seeded only when explicitly enabled. The mechanism is proven; the shipped benchmark
+  // data is not, and a confident wrong prior is worse than no prior at all.
+  if (config.catalogPriorsEnabled) {
+    const priors = catalog.routerPriors((taskType, routeMode) =>
+      extractFeatures({
+        request: UnifiedChatRequestSchema.parse({
+          tenantId: config.defaultTenantId,
+          messages: [{ role: "user", content: "" }],
+          route: { mode: routeMode, taskType },
+        }),
+        available: gateway.availableModels(),
+        estimatedPromptTokens: 1_500,
+      }),
+    );
+    router.applyPriors(priors);
+  }
+
   const runs = new SqliteRunStore(db);
 
   // Falls back to the offline embedder when no embedding model is configured, so memory works with
@@ -163,6 +189,7 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     memory,
     tools,
     toolAudit,
+    catalog,
     get runner() {
       return runner;
     },

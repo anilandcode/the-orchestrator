@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "dependencies": {
+    "@orchestrator/catalog": "workspace:*",
     "@orchestrator/gateway": "workspace:*",
     "@orchestrator/mcp": "workspace:*",
     "@orchestrator/memory": "workspace:*",

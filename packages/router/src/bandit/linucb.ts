@@ -23,6 +23,8 @@ interface Arm {
   /** Response vector, d. */
   b: Float64Array;
   pulls: number;
+  /** Weight of seeded prior evidence. Kept apart from `pulls` so real data stays countable. */
+  syntheticPulls: number;
   totalReward: number;
 }
 
@@ -103,25 +105,62 @@ export class LinUcbBandit implements Bandit {
 
   update(armId: string, features: number[], reward: number): void {
     const arm = this.arm(armId);
-    const x = this.toVector(features);
-    const d = this.dimension;
+    this.applyObservation(arm, this.toVector(features), reward, 1);
 
-    // Sherman-Morrison: A⁻¹ ← A⁻¹ − (A⁻¹x)(A⁻¹x)ᵀ / (1 + xᵀA⁻¹x)
+    arm.pulls += 1;
+    arm.totalReward += reward;
+  }
+
+  /**
+   * Seed a prior worth `weight` pseudo-observations.
+   *
+   * In LinUCB a prior *is* observations: `A` and `b` are additive sums, so external evidence — a
+   * benchmark score, a warm-start eval — enters through exactly the same arithmetic as a real
+   * outcome, just weighted. That also gives decay for free. After 100 real observations a prior
+   * worth 10 is 9% of the evidence, with no half-life to tune and no schedule to get wrong.
+   *
+   * `pulls` is deliberately NOT incremented. It feeds LinUCB's exploration floor and every telemetry
+   * report, so counting seeded evidence there would make an untried arm look explored and suppress
+   * the exploration it most needs. Synthetic weight is tracked separately.
+   */
+  seed(armId: string, features: number[], reward: number, weight: number): void {
+    if (weight <= 0) return;
+
+    const arm = this.arm(armId);
+    this.applyObservation(arm, this.toVector(features), reward, weight);
+    arm.syntheticPulls += weight;
+  }
+
+  /** Real observations only — what the exploration floor and reporting should see. */
+  syntheticPulls(armId: string): number {
+    return this.arms.get(armId)?.syntheticPulls ?? 0;
+  }
+
+  /**
+   * One weighted rank-1 update, shared by `update` and `seed`.
+   *
+   * Sherman-Morrison for `A ← A + w·x·xᵀ`:
+   *   A⁻¹ ← A⁻¹ − w·(A⁻¹x)(A⁻¹x)ᵀ / (1 + w·xᵀA⁻¹x)
+   *
+   * Routing both callers through here is what makes `seed(x, r, N)` and N calls to `update(x, r)`
+   * equivalent by construction rather than by coincidence.
+   */
+  private applyObservation(arm: Arm, x: Float64Array, reward: number, weight: number): void {
+    const d = this.dimension;
     const aInvX = matVec(arm.aInv, x, d);
-    const denominator = 1 + dot(x, aInvX);
+    const denominator = 1 + weight * dot(x, aInvX);
 
     for (let i = 0; i < d; i++) {
       const rowOffset = i * d;
-      const scaled = (aInvX[i] ?? 0) / denominator;
+      const scaled = (weight * (aInvX[i] ?? 0)) / denominator;
       for (let j = 0; j < d; j++) {
         arm.aInv[rowOffset + j] = (arm.aInv[rowOffset + j] ?? 0) - scaled * (aInvX[j] ?? 0);
       }
     }
 
-    for (let i = 0; i < d; i++) arm.b[i] = (arm.b[i] ?? 0) + reward * (x[i] ?? 0);
-
-    arm.pulls += 1;
-    arm.totalReward += reward;
+    for (let i = 0; i < d; i++) {
+      arm.b[i] = (arm.b[i] ?? 0) + weight * reward * (x[i] ?? 0);
+    }
   }
 
   /**
@@ -171,6 +210,7 @@ export class LinUcbBandit implements Bandit {
         aInv: Array.from(arm.aInv),
         b: Array.from(arm.b),
         pulls: arm.pulls,
+        syntheticPulls: arm.syntheticPulls,
         totalReward: arm.totalReward,
       };
     }
@@ -196,6 +236,8 @@ export class LinUcbBandit implements Bandit {
         aInv: Float64Array.from(serialized.aInv),
         b: Float64Array.from(serialized.b),
         pulls: serialized.pulls,
+        // Absent in state written before priors existed; treating it as 0 is correct.
+        syntheticPulls: serialized.syntheticPulls ?? 0,
         totalReward: serialized.totalReward,
       });
     }
@@ -212,7 +254,13 @@ export class LinUcbBandit implements Bandit {
     // A = λI, so A⁻¹ = I/λ.
     for (let i = 0; i < d; i++) aInv[i * d + i] = 1 / this.lambda;
 
-    const arm: Arm = { aInv, b: new Float64Array(d), pulls: 0, totalReward: 0 };
+    const arm: Arm = {
+      aInv,
+      b: new Float64Array(d),
+      pulls: 0,
+      syntheticPulls: 0,
+      totalReward: 0,
+    };
     this.arms.set(armId, arm);
     return arm;
   }

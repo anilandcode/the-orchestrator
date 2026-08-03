@@ -59,6 +59,7 @@ export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
 /** How the caller wants cost, quality, and speed traded off. Becomes the reward weights. */
 export const RouteModeSchema = z.enum(["cheap", "balanced", "best"]);
 export type RouteMode = z.infer<typeof RouteModeSchema>;
+export const ROUTE_MODES = RouteModeSchema.options;
 
 export const TaskTypeSchema = z.enum([
   "general",

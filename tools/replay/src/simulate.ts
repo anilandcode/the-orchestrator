@@ -2,6 +2,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type DerivedPrior,
+  deriveCapabilities,
+  derivePriors,
+  loadBenchmarkFile,
+} from "@orchestrator/catalog";
+import {
   AdaptiveRouter,
   FEATURE_DIMENSION,
   LinUcbBandit,
@@ -9,9 +15,11 @@ import {
   type RoutingContext,
   StaticRouter,
   ThompsonBandit,
+  extractFeatures as buildFeatures,
   extractFeatures,
   selectCandidates,
 } from "@orchestrator/router";
+import { defaultRegistry } from "@orchestrator/shared";
 import {
   type RouteMode,
   TASK_TYPES,
@@ -20,9 +28,11 @@ import {
   createSequentialIds,
 } from "@orchestrator/shared";
 import {
+  MODEL_PROFILES,
   type Observability,
   VALIDATOR_COVERED,
   bestArm,
+  expectedReward,
   seededRandom,
   simulateCall,
   simulationModels,
@@ -55,6 +65,15 @@ const ROUNDS = Number(process.env.SIM_ROUNDS ?? 8_000);
  */
 const ALPHA = Number(process.env.SIM_ALPHA ?? 0.35);
 const EXPLORATION_FLOOR = Number(process.env.SIM_FLOOR ?? 0);
+/**
+ * Rounds counted as "early".
+ *
+ * Priors can only help before real observations accumulate; past that the bandit has better
+ * information than any benchmark. Measuring priors over the whole run would dilute their effect to
+ * nothing and make the feature look pointless whether it works or not.
+ */
+const EARLY_ROUNDS = Number(process.env.SIM_EARLY_ROUNDS ?? 500);
+
 const ROUTE_MODES: RouteMode[] = ["cheap", "balanced", "best"];
 
 interface ArmRun {
@@ -84,6 +103,8 @@ interface ArmRun {
   uncoveredHits: number;
   uncoveredRounds: number;
   totalCostUsd: number;
+  /** Regret accumulated over the opening rounds — where a prior can plausibly help at all. */
+  earlyRegret: number;
 }
 
 interface Scenario {
@@ -131,6 +152,45 @@ function adaptiveRouter(seed: number, minQualityConfidence = 0): AdaptiveRouter 
   });
 }
 
+/**
+ * Priors built from the simulator's latent truth, for the diagnostic arm.
+ *
+ * Uses the same seeding path and the same reward function as the benchmark-fed arm — the only thing
+ * that differs is where the capability numbers come from.
+ */
+function oraclePriors() {
+  const priors = [];
+
+  for (const spec of simulationModels()) {
+    const profile = MODEL_PROFILES[spec.modelId];
+    if (!profile) continue;
+
+    for (const taskType of TASK_TYPES) {
+      for (const routeMode of ROUTE_MODES) {
+        const context = {
+          request: UnifiedChatRequestSchema.parse({
+            tenantId: "sim",
+            messages: [{ role: "user", content: "x" }],
+            route: { mode: routeMode, taskType },
+          }),
+          available: simulationModels(),
+          estimatedPromptTokens: 1_500,
+        };
+
+        priors.push({
+          modelId: spec.modelId,
+          features: buildFeatures(context),
+          reward: expectedReward(spec, taskType, routeMode, 1_500, 400),
+          weight: 12,
+          source: "oracle",
+        });
+      }
+    }
+  }
+
+  return priors;
+}
+
 function buildRuns(): ArmRun[] {
   const empty = () => ({
     observedReward: 0,
@@ -144,6 +204,7 @@ function buildRuns(): ArmRun[] {
     uncoveredHits: 0,
     uncoveredRounds: 0,
     totalCostUsd: 0,
+    earlyRegret: 0,
   });
 
   return [
@@ -168,6 +229,49 @@ function buildRuns(): ArmRun[] {
     {
       name: "LinUCB (validated + gated)",
       router: adaptiveRouter(99, 0.5),
+      observability: "validated",
+      ...empty(),
+    },
+    {
+      name: "LinUCB (gated + priors)",
+      router: (() => {
+        const router = adaptiveRouter(99, 0.5);
+        // Real benchmark-derived priors, through the real derivation path — not hand-tuned numbers
+        // chosen to make this arm win.
+        const capabilities = deriveCapabilities(loadBenchmarkFile().scores);
+        router.applyPriors(
+          derivePriors(capabilities, defaultRegistry).map((prior: DerivedPrior) => ({
+            modelId: prior.modelId,
+            features: buildFeatures({
+              request: UnifiedChatRequestSchema.parse({
+                tenantId: "sim",
+                messages: [{ role: "user", content: "x" }],
+                route: { mode: prior.routeMode, taskType: prior.taskType },
+              }),
+              available: simulationModels(),
+              estimatedPromptTokens: 1_500,
+            }),
+            reward: prior.reward,
+            weight: prior.weight,
+            source: prior.source,
+          })),
+        );
+        return router;
+      })(),
+      observability: "validated",
+      ...empty(),
+    },
+    {
+      // Diagnostic, not a shippable configuration. Priors here are derived from the simulator's own
+      // latent quality table instead of the benchmark file, which answers the only question that
+      // matters when the benchmark-fed arm underperforms: is the seeding MECHANISM broken, or is the
+      // benchmark DATA simply wrong about this world?
+      name: "LinUCB (gated + oracle priors)",
+      router: (() => {
+        const router = adaptiveRouter(99, 0.5);
+        router.applyPriors(oraclePriors());
+        return router;
+      })(),
       observability: "validated",
       ...empty(),
     },
@@ -257,6 +361,7 @@ function run(): { runs: ArmRun[]; oracleReward: number } {
       armRun.trueValue += chosenExpected;
       armRun.totalRegret += Math.max(0, oracle.reward - chosenExpected);
       armRun.regretCurve.push(armRun.totalRegret);
+      if (round < EARLY_ROUNDS) armRun.earlyRegret += Math.max(0, oracle.reward - chosenExpected);
     }
   }
 
@@ -389,7 +494,9 @@ for (const armRun of runs) {
     `${armRun.name.padEnd(24)} true=${armRun.trueValue.toFixed(1).padStart(8)}  ` +
       `optimal=${((armRun.oracleHits / ROUNDS) * 100).toFixed(1).padStart(5)}%  ` +
       `covered=${coveredPct.toFixed(1).padStart(5)}%  ` +
-      `regret=${armRun.totalRegret.toFixed(1).padStart(7)}  gap closed=${closed.toFixed(1).padStart(6)}%`,
+      `regret=${armRun.totalRegret.toFixed(1).padStart(7)}  ` +
+      `early=${armRun.earlyRegret.toFixed(1).padStart(6)}  ` +
+      `gap closed=${closed.toFixed(1).padStart(6)}%`,
   );
 }
 console.log(
@@ -466,6 +573,59 @@ console.log(
     `regret ${gated.totalRegret.toFixed(1)} vs ${baseline.totalRegret.toFixed(1)}, ` +
     `${(((gated.trueValue - baseline.trueValue) / gap) * 100).toFixed(1)}% of the oracle gap closed.`,
 );
+// --- prior finding ---------------------------------------------------------
+const gatedArm = runs.find((r) => r.name === "LinUCB (validated + gated)") as ArmRun;
+const benchmarkPriors = runs.find((r) => r.name === "LinUCB (gated + priors)") as ArmRun;
+const oraclePriorArm = runs.find((r) => r.name === "LinUCB (gated + oracle priors)") as ArmRun;
+
+console.log("\n--- Prior seeding ---");
 console.log(
-  "\nPASS: validators beat the heuristic, and gated adaptive routing beats the static baseline.",
+  `  no priors            early regret ${gatedArm.earlyRegret.toFixed(1)}  total ${gatedArm.totalRegret.toFixed(1)}`,
+);
+console.log(
+  `  benchmark priors     early regret ${benchmarkPriors.earlyRegret.toFixed(1)}  total ${benchmarkPriors.totalRegret.toFixed(1)}`,
+);
+console.log(
+  `  oracle priors        early regret ${oraclePriorArm.earlyRegret.toFixed(1)}  total ${oraclePriorArm.totalRegret.toFixed(1)}`,
+);
+
+if (oraclePriorArm.earlyRegret < gatedArm.earlyRegret) {
+  const reduction = (
+    ((gatedArm.earlyRegret - oraclePriorArm.earlyRegret) / gatedArm.earlyRegret) *
+    100
+  ).toFixed(0);
+  console.log(
+    `\n  MECHANISM: works. Priors drawn from this world's ground truth cut early regret by ${reduction}%.`,
+  );
+}
+
+if (benchmarkPriors.earlyRegret >= gatedArm.earlyRegret) {
+  console.log(
+    "  DATA: the shipped benchmark numbers do NOT describe this world, and seeding from them makes\n" +
+      "        routing worse rather than better. This is why catalog priors ship DISABLED by default.\n" +
+      "        Enabling them is a decision that requires benchmark data validated against your own\n" +
+      "        traffic — the mechanism is sound, but a confident wrong prior is worse than none.",
+  );
+}
+
+/*
+ * Why there is no CI assertion that benchmark priors help.
+ *
+ * Adding one would create pressure to keep tuning the shipped benchmark file until the number went
+ * green, which would be fitting placeholder data to a simulated world and calling it evidence. The
+ * assertion below tests the MECHANISM against ground truth, which is the part this repo controls.
+ * Whether any particular benchmark set transfers to real traffic is a question only real traffic can
+ * answer.
+ */
+if (oraclePriorArm.earlyRegret >= gatedArm.earlyRegret) {
+  console.error(
+    "\nFAIL: seeding from ground-truth priors did not reduce early regret. The seeding mechanism\n" +
+      "is not doing what it claims, independent of any benchmark data.",
+  );
+  process.exit(1);
+}
+
+console.log(
+  "\nPASS: validators beat the heuristic, gated adaptive routing beats the static baseline, and\n" +
+    "prior seeding measurably helps when the priors are true.",
 );

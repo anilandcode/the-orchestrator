@@ -21,6 +21,16 @@ export interface ApiConfig {
   embeddingModel: string | undefined;
   /** Per-tenant tool allow/deny. Absent means the tenant gets no tools at all. */
   toolPolicies: Record<string, { allow: string[]; deny?: string[] }>;
+  /**
+   * Seed the bandit from catalog benchmark priors.
+   *
+   * **Off by default, on evidence.** Simulation showed the seeding mechanism works — priors drawn
+   * from ground truth cut early regret 27% — but that seeding from the shipped benchmark numbers
+   * made routing worse, because those numbers do not describe the environment being routed in.
+   * Enable this only once the benchmark file holds figures you have validated against your own
+   * traffic. See `pnpm replay:simulate`.
+   */
+  catalogPriorsEnabled: boolean;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -43,6 +53,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     memoryTtlMs: env.MEMORY_TTL_MS ? Number(env.MEMORY_TTL_MS) : null,
     embeddingModel: env.MEMORY_EMBEDDING_MODEL || undefined,
     toolPolicies: parseToolPolicies(env.TOOL_POLICIES),
+    catalogPriorsEnabled: env.CATALOG_PRIORS_ENABLED === "true",
   };
 }
 

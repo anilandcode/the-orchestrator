@@ -8,6 +8,7 @@
   "exclude": ["src/**/*.test.ts"],
   "references": [
     { "path": "../../packages/shared" },
+    { "path": "../../packages/catalog" },
     { "path": "../../packages/gateway" },
     { "path": "../../packages/mcp" },
     { "path": "../../packages/memory" },

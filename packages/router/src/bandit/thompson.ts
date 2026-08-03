@@ -21,6 +21,7 @@ interface Arm {
   alpha: number;
   beta: number;
   pulls: number;
+  syntheticPulls: number;
   totalReward: number;
 }
 
@@ -95,6 +96,24 @@ export class ThompsonBandit implements Bandit {
     arm.totalReward += delta;
   }
 
+  /**
+   * Seed a Beta prior worth `weight` pseudo-observations. Same shape as LinUCB's: the posterior is
+   * a sum of evidence, so external evidence is just more of it, weighted.
+   */
+  seed(armId: string, _features: number[], reward: number, weight: number): void {
+    if (weight <= 0) return;
+
+    const arm = this.arm(armId);
+    const clamped = clamp01(reward);
+    arm.alpha += weight * clamped;
+    arm.beta += weight * (1 - clamped);
+    arm.syntheticPulls += weight;
+  }
+
+  syntheticPulls(armId: string): number {
+    return this.arms.get(armId)?.syntheticPulls ?? 0;
+  }
+
   pulls(armId: string): number {
     return this.arms.get(armId)?.pulls ?? 0;
   }
@@ -111,6 +130,7 @@ export class ThompsonBandit implements Bandit {
         alpha: arm.alpha,
         beta: arm.beta,
         pulls: arm.pulls,
+        syntheticPulls: arm.syntheticPulls,
         totalReward: arm.totalReward,
       };
     }
@@ -126,6 +146,7 @@ export class ThompsonBandit implements Bandit {
         alpha: serialized.alpha ?? this.priorAlpha,
         beta: serialized.beta ?? this.priorBeta,
         pulls: serialized.pulls,
+        syntheticPulls: serialized.syntheticPulls ?? 0,
         totalReward: serialized.totalReward,
       });
     }
@@ -136,7 +157,13 @@ export class ThompsonBandit implements Bandit {
     const existing = this.arms.get(armId);
     if (existing) return existing;
 
-    const arm: Arm = { alpha: this.priorAlpha, beta: this.priorBeta, pulls: 0, totalReward: 0 };
+    const arm: Arm = {
+      alpha: this.priorAlpha,
+      beta: this.priorBeta,
+      pulls: 0,
+      syntheticPulls: 0,
+      totalReward: 0,
+    };
     this.arms.set(armId, arm);
     return arm;
   }

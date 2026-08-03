@@ -29,6 +29,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@orchestrator/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@orchestrator/gateway':
         specifier: workspace:*
         version: link:../../packages/gateway
@@ -56,6 +59,21 @@ importers:
       fastify:
         specifier: ^5.2.0
         version: 5.11.0
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
+
+  packages/catalog:
+    dependencies:
+      '@orchestrator/router':
+        specifier: workspace:*
+        version: link:../router
+      '@orchestrator/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@orchestrator/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
       zod:
         specifier: ^3.25.0
         version: 3.25.76
@@ -135,8 +153,26 @@ importers:
         specifier: ^11.7.0
         version: 11.10.0
 
+  tools/catalog:
+    dependencies:
+      '@orchestrator/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
+      '@orchestrator/router':
+        specifier: workspace:*
+        version: link:../../packages/router
+      '@orchestrator/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@orchestrator/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
+
   tools/replay:
     dependencies:
+      '@orchestrator/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
       '@orchestrator/router':
         specifier: workspace:*
         version: link:../../packages/router

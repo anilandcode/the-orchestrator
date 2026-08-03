@@ -13,7 +13,7 @@ import type { RouterState, StateStore } from "./bandit/state-store.js";
 import { selectCandidates } from "./candidates.js";
 import { DEFAULT_CHAIN_LENGTH, buildFallbackChain } from "./fallback.js";
 import { extractFeatures } from "./features.js";
-import type { Router, RoutingContext, TenantPolicies } from "./router.js";
+import type { ModelPrior, Router, RoutingContext, TenantPolicies } from "./router.js";
 import type { StaticRouter } from "./static-router.js";
 
 /**
@@ -335,6 +335,41 @@ export class AdaptiveRouter implements Router {
       const confidence = this.qualityConfidenceFor(taskType);
       return confidence === undefined || confidence >= this.minQualityConfidence;
     });
+  }
+
+  /**
+   * Apply external priors — benchmark scores, warm-start evals — to arms that have no real data.
+   *
+   * **Tilt only.** This deliberately routes to `bandit.seed()` rather than through `observe()`.
+   * `observe()` increments `taskPulls`, which is exactly what the cold-start gate reads; seeding
+   * through it would let a benchmark score open a gate that was designed to require real traffic.
+   * The gates are untouched here by construction, not by care.
+   *
+   * An arm with real observations is skipped outright. Real evidence already outweighs a prior
+   * arithmetically, so re-seeding would buy nothing — and un-applying a weighted update later is
+   * numerically fragile, so the simplest correct rule is to never need to.
+   */
+  applyPriors(priors: ModelPrior[]): { seeded: number; skipped: number } {
+    let seeded = 0;
+    let skipped = 0;
+
+    for (const prior of priors) {
+      if (this.bandit.pulls(prior.modelId) > 0) {
+        skipped += 1;
+        continue;
+      }
+
+      this.bandit.seed(prior.modelId, prior.features, prior.reward, prior.weight);
+      seeded += 1;
+    }
+
+    if (seeded > 0) this.persist();
+    return { seeded, skipped };
+  }
+
+  /** Seeded weight applied to an arm — reported separately from real observations. */
+  syntheticPullsFor(modelId: string): number {
+    return this.bandit.syntheticPulls(modelId);
   }
 
   /** Flush learning to the store. Call on shutdown so the last window is not lost. */

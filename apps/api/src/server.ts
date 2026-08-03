@@ -301,6 +301,34 @@ export function buildServer(container: Container): FastifyInstance {
     };
   });
 
+  // --- catalog --------------------------------------------------------------
+
+  app.get("/v1/catalog", async () => {
+    const status = container.catalog.status();
+    const snapshot = container.catalog.applied();
+
+    return {
+      status,
+      // Every claim carries where it came from and when. "Why did the router start by preferring
+      // this model?" needs an answer, and a benchmark that was retracted needs to be findable.
+      priors: container.catalog.derivedPriors().map((prior) => ({
+        modelId: prior.modelId,
+        taskType: prior.taskType,
+        routeMode: prior.routeMode,
+        capability: Number(prior.capability.toFixed(4)),
+        reward: Number(prior.reward.toFixed(4)),
+        weight: prior.weight,
+        source: prior.source,
+      })),
+      sources: snapshot
+        ? [
+            ...new Set(snapshot.entries.map((entry) => entry.provenance.source)),
+            ...new Set(snapshot.scores.map((score) => score.provenance.source)),
+          ]
+        : [],
+    };
+  });
+
   // --- tools ----------------------------------------------------------------
 
   app.get("/v1/tools", async () => ({

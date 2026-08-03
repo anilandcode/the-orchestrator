@@ -16,6 +16,8 @@ export interface SerializedArm {
   alpha?: number;
   beta?: number;
   pulls: number;
+  /** Weight of seeded prior evidence, kept separate from real observations. */
+  syntheticPulls?: number;
   totalReward: number;
 }
 
@@ -40,6 +42,15 @@ export interface Bandit {
    * arrive first.
    */
   revise(armId: string, features: number[], oldReward: number, newReward: number): void;
+  /**
+   * Apply external evidence worth `weight` pseudo-observations.
+   *
+   * Must not increment `pulls`: seeded evidence is a starting guess, not something the arm has
+   * actually been tried on, and conflating the two would suppress exploration and corrupt reporting.
+   */
+  seed(armId: string, features: number[], reward: number, weight: number): void;
+  /** Total seeded weight applied to an arm. */
+  syntheticPulls(armId: string): number;
   pulls(armId: string): number;
   averageReward(armId: string): number;
   snapshot(): BanditState;

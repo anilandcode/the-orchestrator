@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "dev:api": "tsc -b && tsx watch apps/api/src/index.ts",
     "smoke": "tsc -b && tsx tools/smoke/src/index.ts",
+    "catalog:refresh": "tsc -b && tsx tools/catalog/src/refresh.ts",
     "replay:simulate": "tsc -b && tsx tools/replay/src/simulate.ts",
     "replay:seed": "tsc -b && tsx tools/replay/src/seed.ts",
     "replay": "tsc -b && tsx tools/replay/src/replay.ts"

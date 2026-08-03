@@ -22,6 +22,7 @@ export default defineConfig({
       "@orchestrator/orchestrator": pkg("orchestrator"),
       "@orchestrator/memory": pkg("memory"),
       "@orchestrator/mcp": pkg("mcp"),
+      "@orchestrator/catalog": pkg("catalog"),
     },
   },
   test: {

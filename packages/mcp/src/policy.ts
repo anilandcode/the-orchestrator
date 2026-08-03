@@ -32,7 +32,7 @@ export function evaluatePolicy(
   // Deny wins over allow, always. A policy where the ordering could be argued is a policy nobody
   // can reason about in an incident.
   if (policy.deny?.some((pattern) => matches(pattern, qualifiedName))) {
-    return { allowed: false, reason: `denied by policy pattern` };
+    return { allowed: false, reason: "denied by policy pattern" };
   }
 
   if (!policy.allow.some((pattern) => matches(pattern, qualifiedName))) {
