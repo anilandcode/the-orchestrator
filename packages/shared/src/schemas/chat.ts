@@ -104,6 +104,22 @@ export const UnifiedChatRequestSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   stream: z.boolean().default(false),
   route: RouteHintSchema.default({}),
+  /**
+   * Opt-in conversational memory.
+   *
+   * Deliberately explicit rather than automatic: silently prepending recalled context to a prompt
+   * changes what the model sees and what it costs, and a caller that did not ask for that should
+   * not get it.
+   */
+  memory: z
+    .object({
+      sessionId: z.string().min(1),
+      /** Set false to write this turn to memory without recalling anything into it. */
+      recall: z.boolean().default(true),
+      /** Set false to use memory for this turn without persisting it. */
+      write: z.boolean().default(true),
+    })
+    .optional(),
   metadata: z.record(z.string(), z.string()).optional(),
 });
 export type UnifiedChatRequest = z.infer<typeof UnifiedChatRequestSchema>;

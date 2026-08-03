@@ -9,6 +9,7 @@
   "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/gateway" },
+    { "path": "../../packages/memory" },
     { "path": "../../packages/orchestrator" },
     { "path": "../../packages/quality" },
     { "path": "../../packages/telemetry" },

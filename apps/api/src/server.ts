@@ -21,8 +21,17 @@ import { z } from "zod";
 import type { Container } from "./container.js";
 import { ModelNodeExecutor } from "./executors/model-node.js";
 
-/** Rough token estimate. Routing happens before the provider counts anything, so an estimate is
- *  all that exists at decision time — deliberately conservative rather than clever. */
+/** The text a recall query is built from: the caller's most recent turn. */
+function lastUserText(messages: { role: string; content: unknown }[]): string {
+  const lastUser = [...messages].reverse().find((message) => message.role === "user");
+  if (!lastUser) return "";
+  return typeof lastUser.content === "string" ? lastUser.content : JSON.stringify(lastUser.content);
+}
+
+/**
+ * Rough token estimate. Routing happens before the provider counts anything, so an estimate is all
+ * that exists at decision time — deliberately conservative rather than clever.
+ */
 function estimatePromptTokens(messages: { content: unknown }[]): number {
   const characters = messages.reduce((total, message) => {
     if (typeof message.content === "string") return total + message.content.length;
@@ -87,6 +96,24 @@ export function buildServer(container: Container): FastifyInstance {
       requestId: parsed.data.requestId ?? systemIds.generate("req"),
     };
 
+    // Recall happens before routing: injected context changes the prompt length the router
+    // estimates from and the budget it checks against, so routing on the pre-recall prompt would
+    // under-count and could blow a caller's maxCostUsd.
+    if (chatRequest.memory?.recall) {
+      const recalled = await container.memory.recall({
+        tenantId: chatRequest.tenantId,
+        sessionId: chatRequest.memory.sessionId,
+        query: lastUserText(chatRequest.messages),
+      });
+
+      if (recalled.context) {
+        chatRequest.messages = [
+          { role: "system", content: recalled.context },
+          ...chatRequest.messages,
+        ];
+      }
+    }
+
     const routingContext: RoutingContext = {
       request: chatRequest,
       available: container.gateway.availableModels(),
@@ -107,6 +134,16 @@ export function buildServer(container: Container): FastifyInstance {
 
       const response = await container.gateway.chat(chatRequest, plan);
       await settle(container, chatRequest.requestId, { request: chatRequest, response });
+
+      if (chatRequest.memory?.write) {
+        // Only the caller's own turns and the reply — never the recalled context we just injected,
+        // which would compound into memory-of-memory on every turn.
+        await container.memory.remember({
+          tenantId: chatRequest.tenantId,
+          sessionId: chatRequest.memory.sessionId,
+          messages: [...parsed.data.messages, response.message],
+        });
+      }
 
       // Deferred scoring runs after the reply is sent. Awaiting it here would add the judge's
       // latency to the very call it is grading, and the reward function would read that as the
@@ -258,6 +295,58 @@ export function buildServer(container: Container): FastifyInstance {
         tenantId: container.config.defaultTenantId,
         ...(query.status ? { status: query.status } : {}),
         limit: query.limit ? Number(query.limit) : 50,
+      }),
+    };
+  });
+
+  // --- memory ---------------------------------------------------------------
+
+  app.post("/v1/memory/facts", async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = z
+      .object({ text: z.string().min(1), metadata: z.record(z.string(), z.unknown()).optional() })
+      .safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: { message: parsed.error.message, type: "invalid_request" } });
+    }
+
+    const [item] = await container.memory.rememberFact({
+      tenantId: container.config.defaultTenantId,
+      text: parsed.data.text,
+      ...(parsed.data.metadata ? { metadata: parsed.data.metadata } : {}),
+    });
+    return reply.send(item);
+  });
+
+  app.post("/v1/memory/recall", async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = z
+      .object({ sessionId: z.string().min(1), query: z.string().min(1) })
+      .safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: { message: parsed.error.message, type: "invalid_request" } });
+    }
+
+    // Exposed so callers can inspect what memory *would* inject before trusting it with a prompt.
+    return reply.send(
+      await container.memory.recall({
+        tenantId: container.config.defaultTenantId,
+        sessionId: parsed.data.sessionId,
+        query: parsed.data.query,
+      }),
+    );
+  });
+
+  app.delete("/v1/memory/sessions/:sessionId", async (request: FastifyRequest) => {
+    const { sessionId } = request.params as { sessionId: string };
+    return {
+      forgotten: container.memory.forget({
+        tenantId: container.config.defaultTenantId,
+        sessionId,
       }),
     };
   });

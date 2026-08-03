@@ -20,6 +20,7 @@ export default defineConfig({
       "@orchestrator/telemetry": pkg("telemetry"),
       "@orchestrator/router": pkg("router"),
       "@orchestrator/orchestrator": pkg("orchestrator"),
+      "@orchestrator/memory": pkg("memory"),
     },
   },
   test: {

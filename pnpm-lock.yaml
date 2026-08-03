@@ -32,6 +32,9 @@ importers:
       '@orchestrator/gateway':
         specifier: workspace:*
         version: link:../../packages/gateway
+      '@orchestrator/memory':
+        specifier: workspace:*
+        version: link:../../packages/memory
       '@orchestrator/orchestrator':
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -59,6 +62,18 @@ importers:
       '@orchestrator/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/memory:
+    dependencies:
+      '@orchestrator/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@orchestrator/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
 
   packages/orchestrator:
     dependencies:

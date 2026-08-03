@@ -15,6 +15,10 @@ export interface ApiConfig {
   judgeModel: string;
   judgeSampleRate: number;
   judgeMaxUsdPerHour: number;
+  /** Memory retention. Null keeps items indefinitely. */
+  memoryTtlMs: number | null;
+  /** Uses the offline hashing embedder unless a real embedding model is configured. */
+  embeddingModel: string | undefined;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -34,6 +38,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     judgeModel: env.QUALITY_JUDGE_MODEL ?? "openai/gpt-4o-mini",
     judgeSampleRate: Number(env.QUALITY_JUDGE_SAMPLE_RATE ?? 0.05),
     judgeMaxUsdPerHour: Number(env.QUALITY_JUDGE_MAX_USD_PER_HOUR ?? 1),
+    memoryTtlMs: env.MEMORY_TTL_MS ? Number(env.MEMORY_TTL_MS) : null,
+    embeddingModel: env.MEMORY_EMBEDDING_MODEL || undefined,
   };
 }
 

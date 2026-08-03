@@ -5,6 +5,12 @@ import {
   type ProviderAdapter,
 } from "@orchestrator/gateway";
 import {
+  HashingEmbedder,
+  MemoryService,
+  OpenAiEmbedder,
+  SqliteMemoryStore,
+} from "@orchestrator/memory";
+import {
   CheckpointExecutor,
   type GraphRunner,
   SqliteRunStore,
@@ -52,6 +58,7 @@ export interface Container {
   rewards: RewardService;
   quality: QualityPipeline;
   runs: SqliteRunStore;
+  memory: MemoryService;
   /** Assigned after construction: the model executor needs the settle callback the server owns. */
   runner: GraphRunner | undefined;
   attachRunner(runner: GraphRunner): void;
@@ -118,6 +125,20 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
   });
 
   const runs = new SqliteRunStore(db);
+
+  // Falls back to the offline embedder when no embedding model is configured, so memory works with
+  // no provider account at all — lexically rather than semantically, which embedder.ts is explicit
+  // about.
+  const embedder =
+    config.embeddingModel && config.openaiApiKey
+      ? new OpenAiEmbedder({ apiKey: config.openaiApiKey, model: config.embeddingModel })
+      : new HashingEmbedder();
+
+  const memory = new MemoryService({
+    store: new SqliteMemoryStore(db),
+    embedder,
+    ttlMs: config.memoryTtlMs,
+  });
   let closed = false;
   let runner: GraphRunner | undefined;
 
@@ -131,6 +152,7 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     rewards,
     quality,
     runs,
+    memory,
     get runner() {
       return runner;
     },
