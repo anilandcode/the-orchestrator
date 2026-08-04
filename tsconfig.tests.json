@@ -1,0 +1,45 @@
+{
+  "$comment": [
+    "Typechecks test files, which the per-package configs deliberately exclude.",
+    "",
+    "Those configs exclude tests because tests must not land in the published dist output. But the",
+    "consequence was that no test file in this repo was ever typechecked: vitest transpiles through",
+    "esbuild, which strips types without checking them. A test could assert against a property that",
+    "does not exist and still pass.",
+    "",
+    "This config checks them without emitting. It resolves workspace packages to source rather than",
+    "dist so it does not depend on build order.",
+    "",
+    "Run via `pnpm typecheck:tests`, included in `pnpm verify` and CI."
+  ],
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@orchestrator/shared": ["./packages/shared/src/index.ts"],
+      "@orchestrator/gateway": ["./packages/gateway/src/index.ts"],
+      "@orchestrator/telemetry": ["./packages/telemetry/src/index.ts"],
+      "@orchestrator/router": ["./packages/router/src/index.ts"],
+      "@orchestrator/quality": ["./packages/quality/src/index.ts"],
+      "@orchestrator/orchestrator": ["./packages/orchestrator/src/index.ts"],
+      "@orchestrator/memory": ["./packages/memory/src/index.ts"],
+      "@orchestrator/mcp": ["./packages/mcp/src/index.ts"],
+      "@orchestrator/catalog": ["./packages/catalog/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.test.ts",
+    "apps/*/src/**/*.test.ts",
+    "tools/*/src/**/*.test.ts",
+    "packages/*/src/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "tools/*/src/**/*.ts"
+  ]
+}

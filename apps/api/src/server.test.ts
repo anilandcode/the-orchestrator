@@ -54,20 +54,22 @@ const chatBody = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("API", () => {
-  let app: FastifyInstance | undefined;
-  let container: Container | undefined;
+  let app!: FastifyInstance;
+  let container!: Container;
+  // Guards teardown for describe blocks that never build a server.
+  let live = false;
 
   afterEach(async () => {
-    await app?.close();
-    container?.close();
-    // Cleared so a test that builds no app does not tear down the previous test's container.
-    app = undefined;
-    container = undefined;
+    if (!live) return;
+    live = false;
+    await app.close();
+    container.close();
   });
 
   describe("auth", () => {
     beforeEach(() => {
       ({ app, container } = makeApp([new StubAdapter("openai")]));
+      live = true;
     });
 
     it("rejects a request with no key", async () => {
@@ -95,9 +97,10 @@ describe("API", () => {
   describe("POST /v1/chat", () => {
     beforeEach(() => {
       ({ app, container } = makeApp([new StubAdapter("openai"), new StubAdapter("anthropic")]));
+      live = true;
     });
 
-    const post = (payload: unknown) =>
+    const post = (payload: Record<string, unknown>) =>
       app.inject({
         method: "POST",
         url: "/v1/chat",
@@ -159,6 +162,7 @@ describe("API", () => {
     it("maps a provider failure onto a sensible status and still records it", async () => {
       const rateLimited = new OrchestratorError("rate_limit", "429 slow down");
       ({ app, container } = makeApp([new StubAdapter("openai", rateLimited)]));
+      live = true;
 
       const response = await app.inject({
         method: "POST",
@@ -190,6 +194,7 @@ describe("API", () => {
   describe("GET /v1/models", () => {
     it("lists only models the configured keys can actually reach", async () => {
       ({ app, container } = makeApp([new StubAdapter("openai")]));
+      live = true;
 
       const response = await app.inject({
         method: "GET",
@@ -207,6 +212,7 @@ describe("API", () => {
   describe("POST /v1/feedback", () => {
     beforeEach(() => {
       ({ app, container } = makeApp([new StubAdapter("openai")]));
+      live = true;
     });
 
     it("re-scores an event with an explicit quality signal", async () => {
@@ -247,6 +253,7 @@ describe("API", () => {
   describe("GET /v1/stats", () => {
     it("summarizes traffic and router state", async () => {
       ({ app, container } = makeApp([new StubAdapter("openai")]));
+      live = true;
 
       await app.inject({
         method: "POST",

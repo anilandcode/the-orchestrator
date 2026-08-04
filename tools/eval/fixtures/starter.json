@@ -1,0 +1,92 @@
+[
+  {
+    "id": "extract-invoice-fields",
+    "taskType": "extraction",
+    "prompt": "Extract the invoice number, total, and currency from this text as JSON:\n\nINVOICE #INV-4471\nDate: 3 March 2026\nSubtotal: 240.00\nVAT (17%): 40.80\nTotal due: 280.80 GBP",
+    "outputSchema": {
+      "type": "object",
+      "required": ["invoiceNumber", "total", "currency"],
+      "properties": {
+        "invoiceNumber": { "type": "string" },
+        "total": { "type": "number" },
+        "currency": { "type": "string" }
+      }
+    },
+    "mustContain": ["INV-4471", "280.8"],
+    "maxTokens": 300
+  },
+  {
+    "id": "extract-nested-contact",
+    "taskType": "extraction",
+    "prompt": "Return JSON with the person's name and their employer's city.\n\nDr. Amina Yusuf joined Northwind Analytics, whose head office is in Lahore, last spring.",
+    "outputSchema": {
+      "type": "object",
+      "required": ["name", "employerCity"],
+      "properties": {
+        "name": { "type": "string" },
+        "employerCity": { "type": "string" }
+      }
+    },
+    "mustContain": ["Amina", "Lahore"],
+    "maxTokens": 200
+  },
+  {
+    "id": "code-debounce",
+    "taskType": "code",
+    "prompt": "Write a TypeScript function `debounce<T extends (...args: never[]) => void>(fn: T, ms: number): T` that delays calls. Return only a fenced code block.",
+    "mustContain": ["debounce", "setTimeout", "clearTimeout"],
+    "maxTokens": 500
+  },
+  {
+    "id": "code-off-by-one",
+    "taskType": "code",
+    "prompt": "This function should return the last element but crashes on empty arrays. Fix it and return only the corrected fenced code block.\n\n```ts\nfunction last<T>(xs: T[]): T {\n  return xs[xs.length];\n}\n```",
+    "mustContain": ["length - 1"],
+    "maxTokens": 400
+  },
+  {
+    "id": "classify-sentiment",
+    "taskType": "classification",
+    "prompt": "Classify the sentiment as exactly one word — positive, negative, or neutral. Reply with the word only.\n\n\"The delivery arrived two weeks late and the box was crushed.\"",
+    "mustContain": ["negative"],
+    "mustNotContain": ["positive"],
+    "maxTokens": 10
+  },
+  {
+    "id": "classify-intent",
+    "taskType": "classification",
+    "prompt": "Classify the intent as exactly one of: billing, technical, sales. Reply with the word only.\n\n\"My card was charged twice for the same subscription month.\"",
+    "mustContain": ["billing"],
+    "maxTokens": 10
+  },
+  {
+    "id": "summarize-faithful",
+    "taskType": "summarization",
+    "prompt": "Summarize in one sentence, inventing nothing:\n\nThe Q3 review found that support ticket volume fell 18% after the self-service portal launched, though median resolution time rose slightly because the remaining tickets were more complex.",
+    "mustContain": ["18"],
+    "mustNotContain": ["increased 18", "rose 18"],
+    "maxTokens": 120
+  },
+  {
+    "id": "reasoning-rate",
+    "taskType": "reasoning",
+    "prompt": "A tap fills a tank in 6 hours. A drain empties it in 9 hours. Both open, how many hours to fill the empty tank? Give the number only.",
+    "mustContain": ["18"],
+    "maxTokens": 200
+  },
+  {
+    "id": "reasoning-constraint",
+    "taskType": "reasoning",
+    "prompt": "Three boxes are labelled Apples, Oranges, Mixed. Every label is wrong. You may draw one fruit from one box. Which box do you draw from to deduce all labels? Answer with the label name only.",
+    "mustContain": ["mixed"],
+    "maxTokens": 200
+  },
+  {
+    "id": "general-refusal-boundary",
+    "taskType": "general",
+    "prompt": "What is the capital of Australia? Answer with the city name only.",
+    "mustContain": ["canberra"],
+    "mustNotContain": ["sydney"],
+    "maxTokens": 20
+  }
+]

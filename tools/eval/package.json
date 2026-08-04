@@ -1,0 +1,14 @@
+{
+  "name": "@orchestrator/eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@orchestrator/catalog": "workspace:*",
+    "@orchestrator/gateway": "workspace:*",
+    "@orchestrator/quality": "workspace:*",
+    "@orchestrator/shared": "workspace:*",
+    "@orchestrator/telemetry": "workspace:*",
+    "zod": "^3.25.0"
+  }
+}

@@ -43,8 +43,10 @@ function makeApp(adapters: ProviderAdapter[]) {
 }
 
 describe("memory in /v1/chat", () => {
-  let app: FastifyInstance | undefined;
-  let container: Container | undefined;
+  let app!: FastifyInstance;
+  let container!: Container;
+  // Guards teardown for describe blocks that never build a server.
+  let live = false;
   let adapter: CapturingAdapter;
 
   const auth = { authorization: `Bearer ${API_KEY}` };
@@ -52,17 +54,18 @@ describe("memory in /v1/chat", () => {
   beforeEach(() => {
     adapter = new CapturingAdapter("openai");
     ({ app, container } = makeApp([adapter]));
+    live = true;
   });
 
   afterEach(async () => {
-    await app?.close();
-    container?.close();
-    app = undefined;
-    container = undefined;
+    if (!live) return;
+    live = false;
+    await app.close();
+    container.close();
   });
 
   const chat = (content: string, memory?: Record<string, unknown>) =>
-    app?.inject({
+    app.inject({
       method: "POST",
       url: "/v1/chat",
       headers: auth,
@@ -75,7 +78,7 @@ describe("memory in /v1/chat", () => {
     await chat("My account number is 4471 and I was double charged in March");
     await chat("What did I tell you about my account?");
 
-    expect(container?.memory.forget({ tenantId: "local" })).toBe(0);
+    expect(container.memory.forget({ tenantId: "local" })).toBe(0);
     expect(adapter.seen[1]?.every((m) => m.role === "user")).toBe(true);
   });
 
@@ -107,14 +110,14 @@ describe("memory in /v1/chat", () => {
     await chat("My account number is 4471 and I was double charged in March", { sessionId: "s1" });
     await chat("Remind me about the account number problem I mentioned", { sessionId: "s1" });
 
-    const recall = await app?.inject({
+    const recall = await app.inject({
       method: "POST",
       url: "/v1/memory/recall",
       headers: auth,
       payload: { sessionId: "s1", query: "account" },
     });
 
-    const stored = recall?.json().buffer as { text: string }[];
+    const stored = recall.json().buffer as { text: string }[];
     expect(stored.some((item) => item.text.startsWith("Relevant earlier context"))).toBe(false);
     expect(stored.some((item) => item.text.startsWith("Recent conversation"))).toBe(false);
   });
@@ -136,56 +139,59 @@ describe("memory in /v1/chat", () => {
       write: false,
     });
 
-    const recall = await app?.inject({
+    const recall = await app.inject({
       method: "POST",
       url: "/v1/memory/recall",
       headers: auth,
       payload: { sessionId: "s1", query: "stored" },
     });
 
-    const stored = recall?.json().buffer as { text: string }[];
+    const stored = recall.json().buffer as { text: string }[];
     expect(stored.some((item) => item.text.includes("should not be stored"))).toBe(false);
   });
 });
 
 describe("memory endpoints", () => {
-  let app: FastifyInstance | undefined;
-  let container: Container | undefined;
+  let app!: FastifyInstance;
+  let container!: Container;
+  // Guards teardown for describe blocks that never build a server.
+  let live = false;
   const auth = { authorization: `Bearer ${API_KEY}` };
 
   beforeEach(() => {
     ({ app, container } = makeApp([new CapturingAdapter("openai")]));
+    live = true;
   });
 
   afterEach(async () => {
-    await app?.close();
-    container?.close();
-    app = undefined;
-    container = undefined;
+    if (!live) return;
+    live = false;
+    await app.close();
+    container.close();
   });
 
   it("stores a durable fact that surfaces in a brand-new session", async () => {
-    await app?.inject({
+    await app.inject({
       method: "POST",
       url: "/v1/memory/facts",
       headers: auth,
       payload: { text: "The customer always wants invoices sent to accounts@example.com" },
     });
 
-    const recall = await app?.inject({
+    const recall = await app.inject({
       method: "POST",
       url: "/v1/memory/recall",
       headers: auth,
       payload: { sessionId: "never-seen-before", query: "where should invoices be sent" },
     });
 
-    const body = recall?.json();
+    const body = recall.json();
     expect(body.recalled.length).toBeGreaterThan(0);
     expect(body.context).toMatch(/accounts@example.com/);
   });
 
   it("forgets a session on request", async () => {
-    await app?.inject({
+    await app.inject({
       method: "POST",
       url: "/v1/chat",
       headers: auth,
@@ -195,32 +201,32 @@ describe("memory endpoints", () => {
       },
     });
 
-    const response = await app?.inject({
+    const response = await app.inject({
       method: "DELETE",
       url: "/v1/memory/sessions/doomed",
       headers: auth,
     });
 
-    expect(response?.json().forgotten).toBeGreaterThan(0);
-    expect(container?.memory.forget({ tenantId: "local", sessionId: "doomed" })).toBe(0);
+    expect(response.json().forgotten).toBeGreaterThan(0);
+    expect(container.memory.forget({ tenantId: "local", sessionId: "doomed" })).toBe(0);
   });
 
   it("rejects a malformed recall request", async () => {
-    const response = await app?.inject({
+    const response = await app.inject({
       method: "POST",
       url: "/v1/memory/recall",
       headers: auth,
       payload: { sessionId: "s" },
     });
-    expect(response?.statusCode).toBe(400);
+    expect(response.statusCode).toBe(400);
   });
 
   it("requires auth", async () => {
-    const response = await app?.inject({
+    const response = await app.inject({
       method: "POST",
       url: "/v1/memory/facts",
       payload: { text: "x" },
     });
-    expect(response?.statusCode).toBe(401);
+    expect(response.statusCode).toBe(401);
   });
 });

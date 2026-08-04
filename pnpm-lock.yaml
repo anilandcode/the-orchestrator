@@ -168,6 +168,27 @@ importers:
         specifier: workspace:*
         version: link:../../packages/telemetry
 
+  tools/eval:
+    dependencies:
+      '@orchestrator/catalog':
+        specifier: workspace:*
+        version: link:../../packages/catalog
+      '@orchestrator/gateway':
+        specifier: workspace:*
+        version: link:../../packages/gateway
+      '@orchestrator/quality':
+        specifier: workspace:*
+        version: link:../../packages/quality
+      '@orchestrator/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@orchestrator/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
+
   tools/replay:
     dependencies:
       '@orchestrator/catalog':

@@ -133,6 +133,10 @@ export function buildServer(container: Container): FastifyInstance {
         features: decision.features,
       };
 
+      if (chatRequest.stream) {
+        return await streamChat(container, app, reply, chatRequest, decision, plan);
+      }
+
       const response = await container.gateway.chat(chatRequest, plan);
       await settle(container, chatRequest.requestId, { request: chatRequest, response });
 
@@ -417,6 +421,65 @@ export function buildServer(container: Container): FastifyInstance {
   });
 
   return app;
+}
+
+/**
+ * Server-sent-events passthrough.
+ *
+ * Two things this must get right, and both are about not lying to the learning loop:
+ *
+ *   - **Telemetry still happens.** The gateway records the attempt as it streams, so `settle` runs
+ *     after the stream closes exactly as it does for a buffered call. A streamed request that
+ *     skipped scoring would be traffic the router never learns from.
+ *   - **A mid-stream failure cannot be a status code.** Headers are long gone by then, so the error
+ *     is delivered as a final SSE frame. Silently truncating would look to a client like a short but
+ *     successful answer, which is the worst of the available failures.
+ */
+async function streamChat(
+  container: Container,
+  app: FastifyInstance,
+  reply: FastifyReply,
+  request: UnifiedChatRequest,
+  decision: { decisionId: string; modelId: string },
+  plan: ExecutionPlan,
+): Promise<void> {
+  reply.raw.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+    // Proxies that buffer would defeat the point of streaming entirely.
+    "x-accel-buffering": "no",
+  });
+
+  const send = (event: string, data: unknown) => {
+    reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Sent first so a client can correlate and submit feedback without waiting for the body.
+  send("meta", {
+    requestId: request.requestId,
+    modelId: decision.modelId,
+    routingDecisionId: decision.decisionId,
+  });
+
+  try {
+    for await (const chunk of container.gateway.stream(request, plan)) {
+      send(chunk.type, chunk);
+    }
+    send("done", { requestId: request.requestId });
+  } catch (raw) {
+    const error = toOrchestratorError(raw);
+    send("error", {
+      message: error.message,
+      type: error.errorClass,
+      retryable: error.retryable,
+    });
+    app.log.warn({ err: error }, "stream failed");
+  } finally {
+    reply.raw.end();
+    // Scoring runs whether the stream completed or died — a failed attempt is still evidence.
+    await settle(container, request.requestId as string);
+  }
 }
 
 /**

@@ -44,17 +44,19 @@ function makeApp(adapter: ProviderAdapter) {
 }
 
 describe("quality feedback loop", () => {
-  let app: FastifyInstance | undefined;
-  let container: Container | undefined;
+  let app!: FastifyInstance;
+  let container!: Container;
+  // Guards teardown for describe blocks that never build a server.
+  let live = false;
 
   afterEach(async () => {
-    await app?.close();
-    container?.close();
-    app = undefined;
-    container = undefined;
+    if (!live) return;
+    live = false;
+    await app.close();
+    container.close();
   });
 
-  const post = (instance: FastifyInstance, url: string, payload: unknown) =>
+  const post = (instance: FastifyInstance, url: string, payload: Record<string, unknown>) =>
     instance.inject({
       method: "POST",
       url,
@@ -65,6 +67,7 @@ describe("quality feedback loop", () => {
   describe("inline scoring", () => {
     it("grades a conforming JSON response with the schema validator, not the heuristic", async () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", '{"city":"Karachi"}')));
+      live = true;
 
       const response = await post(app, "/v1/chat", {
         messages: [{ role: "user", content: "extract the city" }],
@@ -90,6 +93,7 @@ describe("quality feedback loop", () => {
 
     it("penalizes a response that violates the declared schema", async () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", '{"town":"Karachi"}')));
+      live = true;
 
       const response = await post(app, "/v1/chat", {
         messages: [{ role: "user", content: "extract the city" }],
@@ -115,6 +119,7 @@ describe("quality feedback loop", () => {
       ({ app, container } = makeApp(
         new ReplyingAdapter("openai", "", [{ id: "c1", name: "get_weather", arguments: {} }]),
       ));
+      live = true;
 
       const response = await post(app, "/v1/chat", {
         messages: [{ role: "user", content: "weather?" }],
@@ -139,6 +144,7 @@ describe("quality feedback loop", () => {
 
     it("falls back to the heuristic floor when nothing else applies", async () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", "just some prose")));
+      live = true;
 
       const response = await post(app, "/v1/chat", {
         messages: [{ role: "user", content: "hello" }],
@@ -185,6 +191,7 @@ describe("quality feedback loop", () => {
   describe("client feedback", () => {
     it("revises the stored reward and records human provenance", async () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", "an answer")));
+      live = true;
 
       const chat = await post(app, "/v1/chat", { messages: [{ role: "user", content: "hi" }] });
       const { requestId } = chat.json<UnifiedChatResponse>();
@@ -203,6 +210,7 @@ describe("quality feedback loop", () => {
       // Re-teaching would count one call twice, inflating the arm's apparent confidence and
       // shrinking its exploration bonus on the strength of a single observation.
       ({ app, container } = makeApp(new ReplyingAdapter("openai", "an answer")));
+      live = true;
 
       const chat = await post(app, "/v1/chat", { messages: [{ role: "user", content: "hi" }] });
       const body = chat.json<UnifiedChatResponse>();
@@ -219,6 +227,7 @@ describe("quality feedback loop", () => {
 
     it("reports how many attempts it revised", async () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", "an answer")));
+      live = true;
       const chat = await post(app, "/v1/chat", { messages: [{ role: "user", content: "hi" }] });
       const { requestId } = chat.json<UnifiedChatResponse>();
 
@@ -228,6 +237,7 @@ describe("quality feedback loop", () => {
 
     it("accumulates revisions across repeated feedback", async () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", "an answer")));
+      live = true;
       const chat = await post(app, "/v1/chat", { messages: [{ role: "user", content: "hi" }] });
       const { requestId } = chat.json<UnifiedChatResponse>();
 
@@ -250,6 +260,7 @@ describe("quality feedback loop", () => {
 
     it("registers no deferred scorer when the judge is off", () => {
       ({ app, container } = makeApp(new ReplyingAdapter("openai", "x")));
+      live = true;
       expect((container as Container).quality.deferredScorers).toHaveLength(0);
       expect((container as Container).quality.inlineScorers.length).toBeGreaterThan(0);
     });

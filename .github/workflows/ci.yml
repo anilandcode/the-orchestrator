@@ -22,6 +22,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      # Tests are excluded from the package configs so they never reach dist, which meant they
+      # were never typechecked at all: vitest strips types via esbuild without checking them.
+      - run: pnpm typecheck:tests
       - run: pnpm lint
       # No provider keys are set here on purpose: every test must pass offline.
       - run: pnpm test

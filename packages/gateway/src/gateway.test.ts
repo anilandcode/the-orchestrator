@@ -304,7 +304,7 @@ describe("Gateway", () => {
     it("records one success event with time-to-first-token", async () => {
       const gateway = build([new ScriptedAdapter("openai", ["ok"], clock)]);
 
-      const chunks = [];
+      const chunks: UnifiedChatChunk[] = [];
       for await (const chunk of gateway.stream(request(), plan(OPENAI_MODEL))) chunks.push(chunk);
 
       expect(chunks.at(-1)).toMatchObject({ type: "finish" });
@@ -321,7 +321,7 @@ describe("Gateway", () => {
         new ScriptedAdapter("anthropic", ["ok"], clock),
       ]);
 
-      const chunks = [];
+      const chunks: UnifiedChatChunk[] = [];
       for await (const chunk of gateway.stream(request(), plan(OPENAI_MODEL, [ANTHROPIC_MODEL]))) {
         chunks.push(chunk);
       }
@@ -335,7 +335,7 @@ describe("Gateway", () => {
       const fallback = new ScriptedAdapter("anthropic", ["ok"], clock);
       const gateway = build([new MidStreamFailureAdapter("openai"), fallback]);
 
-      const chunks = [];
+      const chunks: UnifiedChatChunk[] = [];
       await expect(
         (async () => {
           for await (const chunk of gateway.stream(

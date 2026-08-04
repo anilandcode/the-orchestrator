@@ -12,6 +12,7 @@
     { "path": "./packages/catalog" },
     { "path": "./apps/api" },
     { "path": "./tools/catalog" },
+    { "path": "./tools/eval" },
     { "path": "./tools/replay" },
     { "path": "./tools/smoke" }
   ]

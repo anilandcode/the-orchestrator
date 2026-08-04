@@ -83,8 +83,10 @@ function makeApp(adapters: ProviderAdapter[]) {
 }
 
 describe("POST /v1/runs", () => {
-  let app: FastifyInstance | undefined;
-  let container: Container | undefined;
+  let app!: FastifyInstance;
+  let container!: Container;
+  // Guards teardown for describe blocks that never build a server.
+  let live = false;
   let adapter: StubAdapter;
 
   const auth = { authorization: `Bearer ${API_KEY}` };
@@ -92,23 +94,24 @@ describe("POST /v1/runs", () => {
   beforeEach(() => {
     adapter = new StubAdapter("openai", "billing");
     ({ app, container } = makeApp([adapter]));
+    live = true;
   });
 
   afterEach(async () => {
-    await app?.close();
-    container?.close();
-    app = undefined;
-    container = undefined;
+    if (!live) return;
+    live = false;
+    await app.close();
+    container.close();
   });
 
-  const start = (workflow: unknown, input: Record<string, unknown> = {}) =>
-    app?.inject({ method: "POST", url: "/v1/runs", headers: auth, payload: { workflow, input } });
+  const start = (workflow: Record<string, unknown>, input: Record<string, unknown> = {}) =>
+    app.inject({ method: "POST", url: "/v1/runs", headers: auth, payload: { workflow, input } });
 
   it("runs a multi-step workflow up to its checkpoint", async () => {
     const response = await start(approvalWorkflow, { ticket: "I was charged twice" });
-    expect(response?.statusCode).toBe(200);
+    expect(response.statusCode).toBe(200);
 
-    const state = response?.json();
+    const state = response.json();
     expect(state.status).toBe("paused");
     // Two model nodes ran; the checkpoint stopped it before `send`.
     expect(adapter.calls).toBe(2);
@@ -122,7 +125,7 @@ describe("POST /v1/runs", () => {
     // is routed on its own intent.
     await start(approvalWorkflow, { ticket: "x" });
 
-    const decisions = container?.decisions.query() ?? [];
+    const decisions = container.decisions.query() ?? [];
     expect(decisions).toHaveLength(2);
     expect(decisions.map((d) => d.taskType)).toEqual(["classification", "general"]);
     expect(decisions.map((d) => d.routeMode)).toEqual(["cheap", "balanced"]);
@@ -132,7 +135,7 @@ describe("POST /v1/runs", () => {
     // Workflow traffic is ordinary traffic; excluding it would teach the router from half the system.
     await start(approvalWorkflow, { ticket: "x" });
 
-    const events = container?.events.query() ?? [];
+    const events = container.events.query() ?? [];
     expect(events).toHaveLength(2);
     for (const event of events) {
       expect(event.status).toBe("success");
@@ -144,14 +147,14 @@ describe("POST /v1/runs", () => {
   it("resumes from the checkpoint and completes", async () => {
     const started = (await start(approvalWorkflow, { ticket: "x" }))?.json();
 
-    const resumed = await app?.inject({
+    const resumed = await app.inject({
       method: "POST",
       url: `/v1/runs/${started.runId}/resume`,
       headers: auth,
       payload: { workflow: approvalWorkflow, input: { decision: "approve" } },
     });
 
-    const state = resumed?.json();
+    const state = resumed.json();
     expect(state.status).toBe("completed");
     expect(state.variables.sent).toBe("yes");
     expect(state.variables.final).toBe("billing");
@@ -160,14 +163,14 @@ describe("POST /v1/runs", () => {
   it("takes no branch when the guard rejects, and still terminates", async () => {
     const started = (await start(approvalWorkflow, { ticket: "x" }))?.json();
 
-    const resumed = await app?.inject({
+    const resumed = await app.inject({
       method: "POST",
       url: `/v1/runs/${started.runId}/resume`,
       headers: auth,
       payload: { workflow: approvalWorkflow, input: { decision: "reject" } },
     });
 
-    const state = resumed?.json();
+    const state = resumed.json();
     expect(state.status).toBe("completed");
     expect(state.variables.sent).toBeUndefined();
   });
@@ -185,8 +188,8 @@ describe("POST /v1/runs", () => {
       edges: [{ from: "a", to: "nowhere" }],
     });
 
-    expect(response?.statusCode).toBe(400);
-    expect(response?.json().error.message).toMatch(/Edge to unknown node/);
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.message).toMatch(/Edge to unknown node/);
     expect(adapter.calls).toBe(0);
   });
 
@@ -196,20 +199,20 @@ describe("POST /v1/runs", () => {
       entry: "missing",
       nodes: [{ id: "a", type: "transform", config: { set: {} } }],
     });
-    expect(response?.statusCode).toBe(400);
-    expect(response?.json().error.message).toMatch(/Entry node does not exist/);
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.message).toMatch(/Entry node does not exist/);
   });
 
   it("returns derived state plus the raw event log for debugging", async () => {
     const started = (await start(approvalWorkflow, { ticket: "x" }))?.json();
 
-    const response = await app?.inject({
+    const response = await app.inject({
       method: "GET",
       url: `/v1/runs/${started.runId}`,
       headers: auth,
     });
 
-    const body = response?.json();
+    const body = response.json();
     expect(body.state.runId).toBe(started.runId);
     const types = body.events.map((e: { type: string }) => e.type);
     expect(types[0]).toBe("run_started");
@@ -218,29 +221,29 @@ describe("POST /v1/runs", () => {
   });
 
   it("404s an unknown run", async () => {
-    const response = await app?.inject({
+    const response = await app.inject({
       method: "GET",
       url: "/v1/runs/run_nope",
       headers: auth,
     });
-    expect(response?.statusCode).toBe(404);
+    expect(response.statusCode).toBe(404);
   });
 
   it("lists runs for the tenant", async () => {
     await start(approvalWorkflow, { ticket: "a" });
     await start(approvalWorkflow, { ticket: "b" });
 
-    const response = await app?.inject({ method: "GET", url: "/v1/runs", headers: auth });
-    expect(response?.json().data).toHaveLength(2);
+    const response = await app.inject({ method: "GET", url: "/v1/runs", headers: auth });
+    expect(response.json().data).toHaveLength(2);
   });
 
   it("requires auth", async () => {
-    const response = await app?.inject({
+    const response = await app.inject({
       method: "POST",
       url: "/v1/runs",
       payload: { workflow: approvalWorkflow },
     });
-    expect(response?.statusCode).toBe(401);
+    expect(response.statusCode).toBe(401);
   });
 
   it("fails the run rather than hanging when a provider is unreachable", async () => {
@@ -257,7 +260,7 @@ describe("POST /v1/runs", () => {
       ],
     });
 
-    const state = response?.json();
+    const state = response.json();
     expect(state.status).toBe("failed");
     expect(state.error).toBeTruthy();
   });

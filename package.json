@@ -10,6 +10,8 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
+    "typecheck:tests": "tsc -p tsconfig.tests.json --noEmit",
+    "verify": "pnpm typecheck && pnpm typecheck:tests && pnpm lint && pnpm test && pnpm replay:simulate",
     "clean": "tsc -b --clean && rm -rf packages/*/dist apps/*/dist tools/*/dist",
     "lint": "biome check .",
     "format": "biome format --write .",
@@ -17,6 +19,7 @@
     "test:watch": "vitest",
     "dev:api": "tsc -b && tsx watch apps/api/src/index.ts",
     "smoke": "tsc -b && tsx tools/smoke/src/index.ts",
+    "eval": "tsc -b && tsx tools/eval/src/index.ts",
     "catalog:refresh": "tsc -b && tsx tools/catalog/src/refresh.ts",
     "replay:simulate": "tsc -b && tsx tools/replay/src/simulate.ts",
     "replay:seed": "tsc -b && tsx tools/replay/src/seed.ts",
