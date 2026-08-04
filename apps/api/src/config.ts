@@ -10,6 +10,18 @@ export interface ApiConfig {
   coldStartPulls: number;
   openaiApiKey: string | undefined;
   anthropicApiKey: string | undefined;
+  /** One key reaching every model in the catalog. */
+  openrouterApiKey: string | undefined;
+  /**
+   * Which catalog models may become callable — and therefore bandit arms.
+   *
+   * Empty by default, deliberately. A catalog of ~300 models is knowledge, not a routing pool:
+   * LinUCB regret grows with sqrt(arms x time), so opening all of them would spend far more on
+   * exploration than the ~2% headroom over static rules could ever return.
+   */
+  openrouterModels: string[];
+  openrouterAppUrl: string | undefined;
+  openrouterAppName: string | undefined;
   /** The judge costs real money per graded call, so it is opt-in. */
   judgeEnabled: boolean;
   judgeModel: string;
@@ -45,6 +57,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     coldStartPulls: Number(env.ROUTER_COLD_START_PULLS ?? 25),
     openaiApiKey: env.OPENAI_API_KEY || undefined,
     anthropicApiKey: env.ANTHROPIC_API_KEY || undefined,
+    openrouterApiKey: env.OPENROUTER_API_KEY || undefined,
+    openrouterModels: (env.OPENROUTER_MODELS ?? "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+    openrouterAppUrl: env.OPENROUTER_APP_URL || undefined,
+    openrouterAppName: env.OPENROUTER_APP_NAME || undefined,
     // Off by default: enabling it starts billing for calls the user did not make.
     judgeEnabled: env.QUALITY_JUDGE_ENABLED === "true",
     judgeModel: env.QUALITY_JUDGE_MODEL ?? "openai/gpt-4o-mini",

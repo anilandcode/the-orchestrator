@@ -1,6 +1,7 @@
 export * from "./guardrail.js";
 export * from "./mapping.js";
 export * from "./priors.js";
+export * from "./registration.js";
 export * from "./schema.js";
 export * from "./service.js";
 export * from "./sources/benchmarks.js";

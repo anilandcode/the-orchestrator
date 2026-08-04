@@ -1,8 +1,9 @@
-import { CatalogService, SqliteCatalogStore } from "@orchestrator/catalog";
+import { CatalogService, SqliteCatalogStore, registerFromCatalog } from "@orchestrator/catalog";
 import {
   AnthropicAdapter,
   Gateway,
   OpenAIAdapter,
+  OpenRouterAdapter,
   type ProviderAdapter,
 } from "@orchestrator/gateway";
 import { SqliteToolAuditLog, ToolRegistry } from "@orchestrator/mcp";
@@ -100,6 +101,28 @@ export function buildContainer(config: ApiConfig, overrides: ContainerOverrides 
     if (config.openaiApiKey) adapters.push(new OpenAIAdapter({ apiKey: config.openaiApiKey }));
     if (config.anthropicApiKey) {
       adapters.push(new AnthropicAdapter({ apiKey: config.anthropicApiKey }));
+    }
+    if (config.openrouterApiKey) {
+      adapters.push(
+        new OpenRouterAdapter({
+          apiKey: config.openrouterApiKey,
+          ...(config.openrouterAppUrl ? { appUrl: config.openrouterAppUrl } : {}),
+          ...(config.openrouterAppName ? { appName: config.openrouterAppName } : {}),
+        }),
+      );
+
+      // Catalog knowledge becomes callable only for allowlisted ids. Registering the whole catalog
+      // would hand the bandit ~300 arms against ~2% of headroom, which costs more in exploration
+      // than perfect routing could return.
+      if (config.openrouterModels.length > 0) {
+        const snapshot = catalog.applied();
+        if (snapshot) {
+          registerFromCatalog(registry, snapshot.entries, {
+            allow: config.openrouterModels,
+            provider: "openrouter",
+          });
+        }
+      }
     }
   }
 

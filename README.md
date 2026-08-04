@@ -5,7 +5,7 @@ router** — not the proxy around it. Everything else exists to make that router
 
 ```bash
 pnpm install
-pnpm verify        # typecheck, typecheck tests, lint, 548 tests, simulation
+pnpm verify        # typecheck, typecheck tests, lint, 585 tests, simulation
 ```
 
 No API keys are needed for any of the above. The entire test suite runs offline against mocked
@@ -99,6 +99,15 @@ cannot satisfy the cold-start or observability gates. Enforced by
 cp .env.example .env     # add keys only if you want live calls
 pnpm dev:api
 ```
+
+**One key reaches everything.** `OPENROUTER_API_KEY` alone — free tier included — makes the whole
+catalog callable and unblocks `pnpm smoke`, `pnpm eval`, and real pricing. Separate OpenAI and
+Anthropic keys still work if you have them.
+
+`OPENROUTER_MODELS` controls which catalog models become *callable*, and it is empty by default. That
+is arithmetic rather than caution: LinUCB regret grows with `sqrt(arms x time)`, so opening all ~300
+models multiplies exploration cost about 7x against 2.10% of headroom. The catalog stays full of
+knowledge; the routing pool stays small on purpose.
 
 `ROUTER_MODE` defaults to `shadow`: the bandit computes and logs its choice on every request but the
 static rules execute. Promoting it to `adaptive` is a decision backed by `pnpm replay` against real

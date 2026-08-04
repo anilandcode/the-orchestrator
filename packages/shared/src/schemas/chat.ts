@@ -5,7 +5,12 @@ import { z } from "zod";
  * gateway ever sees a provider-native payload.
  */
 
-export const ProviderIdSchema = z.enum(["openai", "anthropic"]);
+/**
+ * `openrouter` is an aggregator rather than a model vendor: one key reaches several hundred models
+ * across providers. It is a provider here because that is the level the gateway dispatches at —
+ * the vendor behind a given call is recorded in the model id.
+ */
+export const ProviderIdSchema = z.enum(["openai", "anthropic", "openrouter"]);
 export type ProviderId = z.infer<typeof ProviderIdSchema>;
 
 export const RoleSchema = z.enum(["system", "user", "assistant", "tool"]);
