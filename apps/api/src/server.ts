@@ -8,9 +8,9 @@ import {
 import { CONFIDENCE, supersedes } from "@orchestrator/quality";
 import type { RoutingContext } from "@orchestrator/router";
 import {
+  InboundChatRequestSchema,
   type OrchestratorError,
   type UnifiedChatRequest,
-  UnifiedChatRequestSchema,
   type UnifiedChatResponse,
   systemIds,
   toOrchestratorError,
@@ -81,10 +81,10 @@ export function buildServer(container: Container): FastifyInstance {
   }));
 
   app.post("/v1/chat", async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = UnifiedChatRequestSchema.safeParse({
-      tenantId: container.config.defaultTenantId,
-      ...(request.body as Record<string, unknown>),
-    });
+    // Parsed through the inbound schema, which has no `tenantId` field at all. The previous form
+    // spread the body over a default, so a caller supplying `tenantId` simply won — reading another
+    // tenant's memory back through their own prompt, and billing them for it.
+    const parsed = InboundChatRequestSchema.safeParse(request.body);
 
     if (!parsed.success) {
       return reply.status(400).send({
@@ -92,9 +92,12 @@ export function buildServer(container: Container): FastifyInstance {
       });
     }
 
-    const chatRequest = {
+    const requestId = parsed.data.requestId ?? systemIds.generate("req");
+    const chatRequest: UnifiedChatRequest = {
       ...parsed.data,
-      requestId: parsed.data.requestId ?? systemIds.generate("req"),
+      // Server-established identity, never caller input.
+      tenantId: container.config.defaultTenantId,
+      requestId,
     };
 
     // Recall happens before routing: injected context changes the prompt length the router
@@ -138,7 +141,7 @@ export function buildServer(container: Container): FastifyInstance {
       }
 
       const response = await container.gateway.chat(chatRequest, plan);
-      await settle(container, chatRequest.requestId, { request: chatRequest, response });
+      await settle(container, requestId, { request: chatRequest, response });
 
       if (chatRequest.memory?.write) {
         // Only the caller's own turns and the reply — never the recalled context we just injected,
@@ -161,7 +164,7 @@ export function buildServer(container: Container): FastifyInstance {
     } catch (raw) {
       const error = toOrchestratorError(raw);
       // Even a total failure teaches the router something, so settle before returning.
-      await settle(container, chatRequest.requestId);
+      await settle(container, requestId);
 
       return reply.status(statusFor(error)).send({
         error: {
@@ -181,7 +184,12 @@ export function buildServer(container: Container): FastifyInstance {
         .send({ error: { message: parsed.error.message, type: "invalid_request" } });
     }
 
-    const events = container.events.query({ requestId: parsed.data.requestId });
+    // Scoped by tenant. An unscoped lookup would let anyone who guessed a requestId rescore
+    // another tenant's call, poisoning the reward their router learns from.
+    const events = container.events.query({
+      requestId: parsed.data.requestId,
+      tenantId: container.config.defaultTenantId,
+    });
     if (events.length === 0) {
       return reply
         .status(404)

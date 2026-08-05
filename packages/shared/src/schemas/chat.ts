@@ -131,6 +131,22 @@ export const UnifiedChatRequestSchema = z.object({
 export type UnifiedChatRequest = z.infer<typeof UnifiedChatRequestSchema>;
 export type UnifiedChatRequestInput = z.input<typeof UnifiedChatRequestSchema>;
 
+/**
+ * What an HTTP caller is allowed to send.
+ *
+ * **`tenantId` is deliberately absent, and that absence is a security boundary.**
+ *
+ * It is not caller-supplied data — it is the identity the server established during authentication.
+ * A schema that merely *defaults* it leaves spoofing one spread-order mistake away, and every
+ * store-level isolation guarantee in this system keys off that single value: memory recall, tool
+ * policy, run history, and usage attribution. Removing the field makes naming another tenant
+ * impossible to express rather than merely unlikely to succeed.
+ *
+ * The server parses this, then attaches the authenticated tenant itself.
+ */
+export const InboundChatRequestSchema = UnifiedChatRequestSchema.omit({ tenantId: true });
+export type InboundChatRequest = z.infer<typeof InboundChatRequestSchema>;
+
 export const UsageSchema = z.object({
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
